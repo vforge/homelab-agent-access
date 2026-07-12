@@ -22,9 +22,9 @@ Run before proposing changes:
 
 ```bash
 make test
-bash -n bin/ssh-readonly-user/create
-bash -n bin/ssh-readonly-user/list
-bash -n bin/ssh-readonly-user/remove
+bash -n bin/create
+bash -n bin/list
+bash -n bin/remove
 ```
 
 Security-sensitive changes also need disposable-host integration tests and an

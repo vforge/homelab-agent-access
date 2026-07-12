@@ -52,15 +52,15 @@ make test
 Provision an account, inspect it, and remove it later:
 
 ```bash
-./bin/ssh-readonly-user/create root@server ~/.ssh/agent.pub --user agent
-./bin/ssh-readonly-user/list root@server
-./bin/ssh-readonly-user/list root@server --json
-./bin/ssh-readonly-user/remove root@server agent
+./bin/create root@server ~/.ssh/agent.pub --user agent
+./bin/list root@server
+./bin/list root@server --json
+./bin/remove root@server agent
 ```
 
-See [`bin/ssh-readonly-user/README.md`](bin/ssh-readonly-user/README.md) for
+See [`bin/README.md`](bin/README.md) for
 command options and the current remote changes. Agents can use
-[`skills/ssh-readonly-user/SKILL.md`](skills/ssh-readonly-user/SKILL.md) for a
+[`skills/homelab-agent-access/SKILL.md`](skills/homelab-agent-access/SKILL.md) for a
 safe operating procedure.
 
 ## Security model
@@ -83,7 +83,7 @@ may be actively adversarial.
 
 ```text
 .
-├── bin/ssh-readonly-user/  # Current provisioning, audit, and removal scripts
+├── bin/  # Current provisioning, audit, and removal scripts
 ├── skills/                 # Agent-facing usage skill
 ├── tests/                  # Local validation helpers
 ├── AGENTS.md               # Instructions for automated contributors
@@ -100,9 +100,9 @@ threat-model impact.
 
 ```bash
 make test
-bash -n bin/ssh-readonly-user/create
-bash -n bin/ssh-readonly-user/list
-bash -n bin/ssh-readonly-user/remove
+bash -n bin/create
+bash -n bin/list
+bash -n bin/remove
 ```
 
 Tests must not contact real machines. Use disposable VMs or containers for

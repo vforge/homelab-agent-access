@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ###############################################################################
-# ssh-readonly-user/remove
+# bin/remove
 #
 # Removes a readonly user from a remote server. Cleans up:
 #   - User account and home directory
@@ -10,7 +10,7 @@ set -euo pipefail
 #   - SSH authorized_keys entry (if it was the only key)
 #
 # Usage:
-#   ssh-readonly-user/remove user@host <readonly-username>
+#   bin/remove user@host <readonly-username>
 ###############################################################################
 
 usage() {
@@ -59,7 +59,7 @@ if [[ "$REMOTE" != *@* ]]; then
   exit 1
 fi
 
-echo "=== ssh-readonly-user/remove ==="
+echo "=== bin/remove ==="
 echo "  Remote:       $REMOTE"
 echo "  User to remove: $READONLY_USER"
 echo "  Keep home:    $KEEP_HOME"

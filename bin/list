@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ###############################################################################
-# ssh-readonly-user/list
+# bin/list
 #
 # Audits all readonly users on a remote server. Shows:
 #   - Username, shell, home directory
@@ -11,7 +11,7 @@ set -euo pipefail
 #   - Sudo rules from /etc/sudoers.d/readonly-*
 #
 # Usage:
-#   ssh-readonly-user/list user@host [options]
+#   bin/list user@host [options]
 ###############################################################################
 
 usage() {

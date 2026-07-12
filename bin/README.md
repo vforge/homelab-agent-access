@@ -1,4 +1,4 @@
-# ssh-readonly-user
+# Homelab Agent Access command reference
 
 Provision and audit a separate SSH account for read-oriented inspection of a
 homelab machine.
@@ -6,14 +6,14 @@ homelab machine.
 > **Security warning:** This is an experimental baseline, not a complete
 > security boundary for untrusted agents. `rbash`, the command whitelist, and
 > home locking are defense-in-depth measures only. Review the repository
-> [security policy](../../SECURITY.md) before deployment.
+> [security policy](../SECURITY.md) before deployment.
 
 ## Commands
 
 ### Create or update
 
 ```bash
-./create root@server ~/.ssh/agent.pub --user agent
+./bin/create root@server ~/.ssh/agent.pub --user agent
 ```
 
 Options:
@@ -29,9 +29,9 @@ command-list updates. Validate changes on a disposable target first.
 ### Audit
 
 ```bash
-./list root@server
-./list root@server --brief
-./list root@server --json
+./bin/list root@server
+./bin/list root@server --brief
+./bin/list root@server --json
 ```
 
 The audit command reports accounts using an `rbash` login shell, available
@@ -41,8 +41,8 @@ permissions.
 ### Remove
 
 ```bash
-./remove root@server agent
-./remove root@server agent --keep-home
+./bin/remove root@server agent
+./bin/remove root@server agent --keep-home
 ```
 
 Removal deletes the generated sudoers file, restricted authorized-key entries,

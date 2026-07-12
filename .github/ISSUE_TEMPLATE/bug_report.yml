@@ -23,7 +23,7 @@ body:
       label: Reproduction
       description: Provide safe commands and target details using placeholders.
       placeholder: |
-        ./bin/ssh-readonly-user/list root@server --json
+        ./bin/list root@server --json
     validations:
       required: true
   - type: textarea
