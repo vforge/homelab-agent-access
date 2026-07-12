@@ -59,7 +59,9 @@ Provision an account, inspect it, and remove it later:
 ```
 
 See [`bin/ssh-readonly-user/README.md`](bin/ssh-readonly-user/README.md) for
-command options and the current remote changes.
+command options and the current remote changes. Agents can use
+[`skills/ssh-readonly-user/SKILL.md`](skills/ssh-readonly-user/SKILL.md) for a
+safe operating procedure.
 
 ## Security model
 
@@ -82,6 +84,7 @@ may be actively adversarial.
 ```text
 .
 ├── bin/ssh-readonly-user/  # Current provisioning, audit, and removal scripts
+├── skills/                 # Agent-facing usage skill
 ├── tests/                  # Local validation helpers
 ├── AGENTS.md               # Instructions for automated contributors
 ├── CONTRIBUTING.md         # Contribution and validation workflow

@@ -4,6 +4,7 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- Add an agent-facing skill with safe usage rules for the provisioning tools.
 - Harden the provisioning transport and input serialization.
 - Replace the interactive whitelist with a forced-command dispatcher.
 - Replace wildcard sudoers rules with exact root-owned read-only helpers.
