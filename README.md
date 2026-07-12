@@ -1,25 +1,100 @@
 # Homelab Agent Access
 
-Restricted, read-oriented SSH access for agents inspecting homelab machines.
+Small, SSH-based tooling for giving an agent intentionally constrained access to
+homelab machines for service, log, network, and hardware inspection.
 
-> **Status:** Work in progress. The current scripts are a migrated baseline and
-> are not yet a complete security boundary for untrusted agents. Review and
-> harden the dispatcher, SSH transport, and privilege rules before deployment.
+[![CI](https://github.com/vforge/homelab-agent-access/actions/workflows/ci.yml/badge.svg)](https://github.com/vforge/homelab-agent-access/actions/workflows/ci.yml)
 
-## Contents
+> **Status: experimental.** The current scripts are a migrated baseline, not a
+> complete security boundary for untrusted or prompt-injectable agents. Read
+> [SECURITY.md](SECURITY.md) before deploying them.
 
-- `bin/ssh-readonly-user/` — provisioning, audit, and removal scripts.
+## Scope
 
-## Design goals
+The current baseline provisions a separate SSH user with:
 
-- Separate agent identities from administrator access.
-- Permit service status, selected logs, port, and hardware inspection.
-- Avoid installing a monitoring stack on each machine.
-- Keep host-specific inventory and credentials out of this repository.
+- A restricted Bash login shell and a command-path whitelist.
+- SSH authorized-key forwarding restrictions.
+- Optional, limited sudo rules for service and log inspection.
+- Create, audit, key-rotation, and removal workflows.
 
-## Planned hardening
+This project intentionally installs no monitoring daemon or agent package on
+remote machines. It assumes the required operating-system tools already exist.
 
-- Replace the interactive `rbash`/PATH whitelist with a forced-command dispatcher.
-- Use exact root-owned read-only helpers instead of wildcard sudo rules.
-- Safely serialize provisioning inputs over SSH.
-- Add shell tests and disposable-host validation.
+## Quick start
+
+### Requirements
+
+- Bash and OpenSSH on the administering machine.
+- A privileged SSH login to the target. The current scripts perform privileged
+  operations directly and do not automatically invoke `sudo`.
+- A Debian/Ubuntu or Arch-like target, or a target with compatible `useradd`,
+  `adduser`, `chsh`, and `sudo` tools.
+- A public SSH key stored outside this repository.
+
+Run the local syntax checks first:
+
+```bash
+make test
+```
+
+Provision an account, inspect it, and remove it later:
+
+```bash
+./bin/ssh-readonly-user/create root@server ~/.ssh/agent.pub --user agent
+./bin/ssh-readonly-user/list root@server
+./bin/ssh-readonly-user/list root@server --json
+./bin/ssh-readonly-user/remove root@server agent
+```
+
+See [`bin/ssh-readonly-user/README.md`](bin/ssh-readonly-user/README.md) for
+command options and the current remote changes.
+
+## Security model
+
+The intended operator is an administrator provisioning a dedicated account for
+a trusted environment. The agent key should be treated as a separate,
+revocable identity—not as an administrator key.
+
+The current implementation is **not suitable as a hard security boundary** for
+an untrusted agent. In particular, `rbash` and a PATH whitelist are bypassable,
+the current sudo rules are broader than readonly access, and the optional home
+lock is only defense in depth.
+
+The planned direction is a forced-command dispatcher with root-owned helpers
+that accept a small, validated set of read-only operations. Until that work is
+complete, do not deploy this baseline to production or to hosts where the agent
+may be actively adversarial.
+
+## Repository layout
+
+```text
+.
+├── bin/ssh-readonly-user/  # Current provisioning, audit, and removal scripts
+├── tests/                  # Local validation helpers
+├── AGENTS.md               # Instructions for automated contributors
+├── CONTRIBUTING.md         # Contribution and validation workflow
+├── SECURITY.md             # Threat model, limitations, and reporting
+└── Makefile                # Local test entry point
+```
+
+## Development
+
+Changes to remote execution, SSH options, sudoers, filesystem permissions, or
+input parsing are security-sensitive. Keep changes small and document the
+threat-model impact.
+
+```bash
+make test
+bash -n bin/ssh-readonly-user/create
+bash -n bin/ssh-readonly-user/list
+bash -n bin/ssh-readonly-user/remove
+```
+
+Tests must not contact real machines. Use disposable VMs or containers for
+integration testing and never commit host-specific configuration, credentials,
+private keys, or real logs.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -2,3 +2,8 @@
 *.log
 .env
 .env.*
+*.pub
+*.pem
+*.key
+id_rsa*
+id_ed25519*
