@@ -9,7 +9,10 @@ All notable changes to this project are documented here.
 - Replace wildcard sudoers rules with exact root-owned read-only helpers.
 - Add disposable-host integration tests.
 
-## Initial repository import
+## [0.1.0] - 2026-07-12
+
+Initial public baseline:
 
 - Migrated the SSH readonly-user scripts from a dotfiles repository.
 - Added public-repository documentation and security guidance.
+- Added local validation and GitHub Actions CI.

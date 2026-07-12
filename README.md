@@ -9,6 +9,17 @@ homelab machines for service, log, network, and hardware inspection.
 > complete security boundary for untrusted or prompt-injectable agents. Read
 > [SECURITY.md](SECURITY.md) before deploying them.
 
+## Personal project disclaimer
+
+This is a personal homelab project published as-is for my own use. It may change,
+break, or be replaced without notice as my environment and requirements evolve.
+If you find it useful, great—but review it carefully and adapt it to your own
+machines, threat model, and operational practices. It is not a supported
+product, security certification, or recommendation, and you are responsible for
+any deployment and resulting damage.
+
+See [DISCLAIMER.md](DISCLAIMER.md) for the short version.
+
 ## Scope
 
 The current baseline provisions a separate SSH user with:
