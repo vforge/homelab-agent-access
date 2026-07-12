@@ -4,48 +4,22 @@ set -euo pipefail
 ###############################################################################
 # bin/create
 #
-# Creates a restricted readonly user on a remote server. Designed for agents
-# that need to inspect system state, check services, and read logs.
-#
-# Usage:
-#   bin/create user@host /path/to/id_rsa.pub [options]
-#
-# Options:
-#   --user <name>              Override username (default: derived from key filename)
-#   --commands "cmd1,cmd2,..." Custom whitelist of allowed commands
-#   --lock-home                Make home directory read-only (immutable symlinks)
-#   --help                     Show this help
+# Provision a dedicated forced-command SSH account for read-oriented homelab
+# inspection. The remote account has no interactive shell interface.
 ###############################################################################
 
-# ── Defaults ────────────────────────────────────────────────────────────────
-DEFAULT_COMMANDS=(
-  ls cat less more tail head grep find df du free
-  uptime whoami date wc sort uniq cut awk sed file
-  ps top tree ping curl wget ssh-keygen hostname env
-  ss netstat lsof tmux
-)
-
-# ── Argument parsing ────────────────────────────────────────────────────────
 usage() {
-  cat >&2 <<EOF
-Usage: $(basename "$0") user@host /path/to/id_rsa.pub [options]
+  cat >&2 <<'EOF'
+Usage: create user@host /path/to/public-key.pub [options]
 
 Options:
-  --user <name>              Override readonly username (default: derived from key filename)
-  --commands "cmd1,cmd2,..." Custom whitelist of allowed commands
-  --lock-home                Make home directory read-only (immutable symlinks)
-  --unlock-home              Unlock home directory (revert --lock-home)
-  --help                     Show this help
+  --user <name>   Remote account name (default: derived from key filename)
+  --help          Show this help
 
-Notes:
-  This script is idempotent — safe to re-run to update keys, commands, or permissions.
-
-Examples:
-  $(basename "$0") root@server ~/.ssh/id_ed25519_agent.pub
-  $(basename "$0") admin@server   ~/.ssh/agent.pub --user monitor
-  $(basename "$0") root@host      ~/.ssh/agent.pub --commands "ls,cat,tail,grep" --lock-home
+The remote login must be privileged. The target must already trust the
+administrator's host key; this command uses StrictHostKeyChecking=yes.
 EOF
-  exit 1
+  exit 2
 }
 
 if [[ $# -lt 2 ]]; then
@@ -54,29 +28,15 @@ fi
 
 REMOTE="$1"
 KEY_FILE="$2"
-shift 2 || true
+shift 2
 
-COMMANDS=("${DEFAULT_COMMANDS[@]}")
-LOCK_HOME=false
-UNLOCK_HOME=false
-
+READONLY_USER_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user)
+      [[ $# -ge 2 ]] || usage
       READONLY_USER_OVERRIDE="$2"
-      shift 2 || true
-      ;;
-    --commands)
-      IFS=',' read -ra COMMANDS <<< "${2}"
-      shift 2 || true
-      ;;
-    --lock-home)
-      LOCK_HOME=true
-      shift
-      ;;
-    --unlock-home)
-      UNLOCK_HOME=true
-      shift
+      shift 2
       ;;
     --help)
       usage
@@ -88,21 +48,47 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Validate inputs ─────────────────────────────────────────────────────────
-if [[ ! -f "$KEY_FILE" ]]; then
-  echo "Error: Key file not found: $KEY_FILE" >&2
+if [[ "$REMOTE" == -* || ! "$REMOTE" =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]]; then
+  echo "Error: remote must be in user@host format: $REMOTE" >&2
   exit 1
 fi
 
-if [[ "$REMOTE" != *@* ]]; then
-  echo "Error: Remote must be in user@host format, got: $REMOTE" >&2
+if [[ ! -f "$KEY_FILE" || ! -r "$KEY_FILE" ]]; then
+  echo "Error: public key file is not readable: $KEY_FILE" >&2
   exit 1
 fi
 
-# Derive username from key filename unless overridden
-# Convention: id_ed25519_agent.pub → agent, mykey.pub → mykey
-KEY_BASENAME="$(basename "$KEY_FILE" .pub)"
-if [[ -n "${READONLY_USER_OVERRIDE:-}" ]]; then
+# Require exactly one non-empty authorized-key line. This prevents newlines or
+# authorized_keys options from becoming an input-injection mechanism.
+line_count="$(grep -c '^' "$KEY_FILE" 2>/dev/null || true)"
+if [[ "$line_count" != 1 ]]; then
+  echo "Error: public key file must contain exactly one line" >&2
+  exit 1
+fi
+
+PUBLIC_KEY="$(cat "$KEY_FILE")"
+if [[ "$PUBLIC_KEY" == *$'\n'* || "$PUBLIC_KEY" == *$'\r'* ]]; then
+  echo "Error: public key contains a newline" >&2
+  exit 1
+fi
+
+read -r KEY_TYPE KEY_DATA _ <<< "$PUBLIC_KEY"
+if [[ ! "$KEY_TYPE" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)$ ]]; then
+  echo "Error: unsupported or malformed public-key type" >&2
+  exit 1
+fi
+if [[ ! "$KEY_DATA" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]; then
+  echo "Error: malformed public-key data" >&2
+  exit 1
+fi
+if ! ssh-keygen -lf "$KEY_FILE" >/dev/null 2>&1; then
+  echo "Error: ssh-keygen could not validate the public key" >&2
+  exit 1
+fi
+
+KEY_BASENAME="${KEY_FILE##*/}"
+KEY_BASENAME="${KEY_BASENAME%.pub}"
+if [[ -n "$READONLY_USER_OVERRIDE" ]]; then
   READONLY_USER="$READONLY_USER_OVERRIDE"
 elif [[ "$KEY_BASENAME" == id_* ]]; then
   READONLY_USER="${KEY_BASENAME##id_*_}"
@@ -110,274 +96,168 @@ else
   READONLY_USER="$KEY_BASENAME"
 fi
 
-PUBLIC_KEY="$(cat "$KEY_FILE")"
-CMD_LIST="${COMMANDS[*]}"
+if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root ]]; then
+  echo "Error: invalid or reserved account name: $READONLY_USER" >&2
+  exit 1
+fi
 
-echo "=== bin/create ==="
-echo "  Remote:       $REMOTE"
-echo "  New user:     $READONLY_USER"
-echo "  SSH key:      $KEY_FILE"
-echo "  Commands:     ${COMMANDS[*]}"
-echo "  Lock home:    $LOCK_HOME"
-echo "  Unlock home:  $UNLOCK_HOME"
-echo ""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DISPATCHER_FILE="$SCRIPT_DIR/remote/homelab-agent-dispatch"
+ROOT_HELPER_FILE="$SCRIPT_DIR/remote/homelab-agent-dispatch-root"
+for file in "$DISPATCHER_FILE" "$ROOT_HELPER_FILE"; do
+  [[ -f "$file" ]] || { echo "Error: missing helper template: $file" >&2; exit 1; }
+done
 
-# ── SSH and provision ───────────────────────────────────────────────────────
-ssh -o StrictHostKeyChecking=accept-new "$REMOTE" bash -s \
-  "$READONLY_USER" "$CMD_LIST" "$LOCK_HOME" "$UNLOCK_HOME" "$PUBLIC_KEY" << 'REMOTE_SCRIPT'
-set -euo pipefail
-
-READONLY_USER="$1"
-CMD_LIST="$2"
-LOCK_HOME="$3"
-UNLOCK_HOME="$4"
-PUBLIC_KEY="$5"
-
-# ── Detect OS ───────────────────────────────────────────────────────────────
-detect_os() {
-  if [[ -f /etc/debian_version ]]; then
-    echo "debian"
-  elif command -v lsb_release &>/dev/null && lsb_release -si 2>/dev/null | grep -qiE 'debian|ubuntu'; then
-    echo "debian"
-  elif [[ -f /etc/arch-release ]]; then
-    echo "arch"
-  elif command -v lsb_release &>/dev/null && lsb_release -si 2>/dev/null | grep -qiE 'arch|cachyos'; then
-    echo "arch"
-  else
-    echo "unknown"
-  fi
+encode_file() {
+  base64 < "$1" | tr -d '\n'
 }
 
-OS_TYPE="$(detect_os)"
-echo "[*] Detected OS: $OS_TYPE"
+PUBLIC_KEY_B64="$(printf '%s' "$PUBLIC_KEY" | base64 | tr -d '\n')"
+DISPATCHER_B64="$(encode_file "$DISPATCHER_FILE")"
+ROOT_HELPER_B64="$(encode_file "$ROOT_HELPER_FILE")"
 
-# ── Phase 1: Create user ────────────────────────────────────────────────────
-if id "$READONLY_USER" &>/dev/null; then
-  echo "[i] User '$READONLY_USER' already exists, updating..."
+printf 'Provisioning forced-command access for %s on %s\n' "$READONLY_USER" "$REMOTE"
+printf 'Public key: %s\n' "$KEY_FILE"
+
+ssh \
+  -o BatchMode=yes \
+  -o RequestTTY=no \
+  -o StrictHostKeyChecking=yes \
+  -o ConnectTimeout=10 \
+  -- "$REMOTE" bash -s -- \
+  "$READONLY_USER" "$PUBLIC_KEY_B64" "$DISPATCHER_B64" "$ROOT_HELPER_B64" <<'REMOTE_SCRIPT'
+set -euo pipefail
+
+[[ $# -eq 4 ]] || { echo "invalid provisioning payload" >&2; exit 64; }
+READONLY_USER="$1"
+PUBLIC_KEY_B64="$2"
+DISPATCHER_B64="$3"
+ROOT_HELPER_B64="$4"
+
+if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root ]]; then
+  echo "invalid account name" >&2
+  exit 64
+fi
+
+for required in id getent useradd usermod install mktemp base64 sudo visudo; do
+  command -v "$required" >/dev/null 2>&1 || {
+    echo "required remote command is missing: $required" >&2
+    exit 69
+  }
+done
+[[ -x /usr/bin/sudo ]] || {
+  echo "expected sudo path is missing: /usr/bin/sudo" >&2
+  exit 69
+}
+
+PUBLIC_KEY="$(printf '%s' "$PUBLIC_KEY_B64" | base64 -d)"
+DISPATCHER_TMP="$(mktemp)"
+ROOT_HELPER_TMP="$(mktemp)"
+AUTH_TMP="$(mktemp)"
+SUDOERS_TMP="$(mktemp)"
+MARKER_TMP=""
+cleanup() {
+  rm -f "$DISPATCHER_TMP" "$ROOT_HELPER_TMP" "$AUTH_TMP" "$SUDOERS_TMP" "$MARKER_TMP"
+}
+trap cleanup EXIT
+printf '%s' "$DISPATCHER_B64" | base64 -d > "$DISPATCHER_TMP"
+printf '%s' "$ROOT_HELPER_B64" | base64 -d > "$ROOT_HELPER_TMP"
+chmod 755 "$DISPATCHER_TMP" "$ROOT_HELPER_TMP"
+
+MANAGED_DIR="/etc/homelab-agent-access"
+MARKER="$MANAGED_DIR/$READONLY_USER"
+DISPATCHER_PATH="/usr/local/sbin/homelab-agent-dispatch"
+ROOT_HELPER_PATH="/usr/local/sbin/homelab-agent-dispatch-root"
+SUDOERS_FILE="/etc/sudoers.d/homelab-agent-$READONLY_USER"
+MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
+MANAGED_END="# END homelab-agent-access managed key"
+KEY_OPTIONS='no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc,command="/usr/local/sbin/homelab-agent-dispatch"'
+
+install -d -o root -g root -m 755 "$MANAGED_DIR"
+if id "$READONLY_USER" >/dev/null 2>&1; then
+  [[ -f "$MARKER" ]] || {
+    echo "refusing to modify unmanaged existing account: $READONLY_USER" >&2
+    exit 73
+  }
+  grep -q '^version=2$' "$MARKER" || {
+    echo "unsupported managed-account version: $READONLY_USER" >&2
+    exit 73
+  }
+  echo "Updating managed account '$READONLY_USER'"
 else
-  case "$OS_TYPE" in
-    debian)
-      adduser --disabled-password --gecos "" "$READONLY_USER"
-      ;;
-    arch)
-      useradd -m -s /bin/rbash "$READONLY_USER"
-      ;;
-    *)
-      if command -v useradd &>/dev/null; then
-        useradd -m -s /bin/rbash "$READONLY_USER"
-      elif command -v adduser &>/dev/null; then
-        adduser --disabled-password --gecos "" "$READONLY_USER"
-      else
-        echo "[!] Error: Could not detect OS and no useradd/adduser found" >&2
-        exit 1
-      fi
-      ;;
-  esac
-  echo "[+] Created user '$READONLY_USER'"
+  useradd --create-home --shell /bin/bash --password '!' "$READONLY_USER"
+  MARKER_TMP="$(mktemp)"
+  printf 'version=2\n' > "$MARKER_TMP"
+  install -o root -g root -m 444 "$MARKER_TMP" "$MARKER"
+  rm -f "$MARKER_TMP"
+  echo "Created account '$READONLY_USER'"
 fi
 
-# Ensure /bin/rbash exists (Debian sometimes omits the symlink)
-if [[ ! -f /bin/rbash ]]; then
-  ln -sf /bin/bash /bin/rbash 2>/dev/null || true
-fi
-chsh -s /bin/rbash "$READONLY_USER"
-echo "[+] Set login shell to /bin/rbash"
-
-# ── Phase 2: Setup private bin with symlinks ────────────────────────────────
-HOME_DIR="$(eval echo ~$READONLY_USER)"
-PRIVATE_BIN="$HOME_DIR/.readonly-bin"
-mkdir -p "$PRIVATE_BIN"
-
-# Track what we're installing for idempotent cleanup later
-NEW_COMMANDS_SET=""
-for cmd in $CMD_LIST; do
-  NEW_COMMANDS_SET="$NEW_COMMANDS_SET $cmd"
-done
-
-cmd_count=$(echo "$CMD_LIST" | wc -w | tr -d ' ')
-echo "[*] Setting up private bin at $PRIVATE_BIN ($cmd_count commands)"
-
-# Clean up stale symlinks (commands removed from whitelist since last run)
-stale=0
-for link in "$PRIVATE_BIN"/*; do
-  [[ -L "$link" ]] || continue
-  link_name="$(basename "$link")"
-  if ! echo "$NEW_COMMANDS_SET" | grep -qw "$link_name"; then
-    rm -f "$link"
-    stale=$((stale + 1))
-  fi
-done
-[[ $stale -gt 0 ]] && echo "[i] Removed $stale stale symlink(s) from private bin"
-
-# Create/update symlinks for all whitelisted commands
-for cmd in $CMD_LIST; do
-  if bin_path=$(command -v "$cmd" 2>/dev/null); then
-    real_path="$(readlink -f "$bin_path")"
-    target="$PRIVATE_BIN/$cmd"
-    rm -f "$target"
-    ln -sf "$real_path" "$target"
-  else
-    echo "[!] Warning: Command '$cmd' not found on system, skipping" >&2
-  fi
-done
-
-# ── Phase 3: Setup .profile with hardening ──────────────────────────────────
-cat > "$HOME_DIR/.profile" << 'PROFILE'
-# Readonly user profile — defense in depth
-
-# Lock PATH to private bin only
-readonly HOME
-export PATH="$HOME/.readonly-bin"
-
-# Block environment variable hijacks (BASH_ENV can source arbitrary scripts)
-unset BASH_ENV ENV CDPATH 2>/dev/null || true
-
-# Enable restricted mode
-set -o restricted 2>/dev/null || true
-
-# Clear history (no persistence across sessions)
-history -c 2>/dev/null || true
-
-# Block editor escapes (vi/vim can spawn shells with :!sh)
-alias vi='echo "vi is not allowed"'
-alias vim='echo "vim is not allowed"'
-alias nano='echo "nano is not allowed"'
-alias emacs='echo "emacs is not allowed"'
-
-# Block interpreter escapes (python/perl/ruby can run arbitrary code)
-alias python='echo "python is not allowed"'
-alias python3='echo "python3 is not allowed"'
-alias perl='echo "perl is not allowed"'
-alias ruby='echo "ruby is not allowed"'
-alias lua='echo "lua is not allowed"'
-
-# Block shell escapes
-alias bash='echo "bash is not allowed — you are already in rbash"'
-alias sh='echo "sh is not allowed"'
-
-# Greeting
-echo "--- readonly shell: type 'ls' or 'exit' ---"
-PROFILE
-
-# Also create .bashrc to catch non-login shells (e.g., sudo -u)
-cat > "$HOME_DIR/.bashrc" << 'BASHRC'
-export PATH="$HOME/.readonly-bin"
-unset BASH_ENV ENV CDPATH 2>/dev/null || true
-set -o restricted 2>/dev/null || true
-BASHRC
-
-# ── Phase 4: Install SSH key with hardening ────────────────────────────────
-mkdir -p "$HOME_DIR/.ssh"
-chmod 700 "$HOME_DIR/.ssh"
-
-KEY_FLAGS="no-port-forwarding,no-X11-forwarding,no-agent-forwarding"
-NEW_KEY_LINE="$KEY_FLAGS,$PUBLIC_KEY"
-
-# Check if this exact key is already installed
-KEY_PART="$(echo "$NEW_KEY_LINE" | awk '{print $(NF-1), $NF}')"
-if [[ -f "$HOME_DIR/.ssh/authorized_keys" ]] && grep -qF "$KEY_PART" "$HOME_DIR/.ssh/authorized_keys"; then
-  echo "[i] SSH key already present for '$READONLY_USER' (unchanged)"
-else
-  # Replace ALL readonly keys for this user with the new one (handles key rotation)
-  existing_readonly=0
-  if [[ -f "$HOME_DIR/.ssh/authorized_keys" ]]; then
-    existing_readonly="$(grep -c "^$KEY_FLAGS," "$HOME_DIR/.ssh/authorized_keys" 2>/dev/null || echo 0)"
-    sed -i "/^$KEY_FLAGS,/d" "$HOME_DIR/.ssh/authorized_keys"
-  fi
-  echo "$NEW_KEY_LINE" >> "$HOME_DIR/.ssh/authorized_keys"
-  if [[ $existing_readonly -gt 0 ]]; then
-    echo "[+] SSH key updated (replaced $existing_readonly old key(s) for '$READONLY_USER')"
-  else
-    echo "[+] SSH key installed for '$READONLY_USER'"
-  fi
+HOME_DIR=""
+IFS=: read -r _ _ _ _ _ HOME_DIR _ < <(getent passwd "$READONLY_USER")
+if [[ -z "$HOME_DIR" || "$HOME_DIR" != /* || "$HOME_DIR" == / || ! -d "$HOME_DIR" || -L "$HOME_DIR" ]]; then
+  echo "invalid account home directory" >&2
+  exit 65
 fi
 
-chmod 600 "$HOME_DIR/.ssh/authorized_keys"
-echo "[+] SSH key installed with hardening flags: $KEY_FLAGS"
+# The account is controlled by the forced key, not by a writable shell profile.
+usermod --shell /bin/bash --lock "$READONLY_USER"
+chown root:root "$HOME_DIR"
+chmod 755 "$HOME_DIR"
 
-# ── Phase 5: Setup limited sudo (for agents) ────────────────────────────────
-SUDOERS_FILE="/etc/sudoers.d/readonly-${READONLY_USER}"
+install -d -o root -g root -m 755 /usr/local/sbin
+install -o root -g root -m 755 "$DISPATCHER_TMP" "$DISPATCHER_PATH"
+install -o root -g root -m 755 "$ROOT_HELPER_TMP" "$ROOT_HELPER_PATH"
 
-cat > "$SUDOERS_FILE" << SUDOERS
-# Readonly user: ${READONLY_USER} — agent access for service inspection
-# Auto-generated by bin/create on $(date -u '+%Y-%m-%d %H:%M UTC')
+SSH_DIR="$HOME_DIR/.ssh"
+AUTH_KEYS="$SSH_DIR/authorized_keys"
+install -d -o root -g root -m 700 "$SSH_DIR"
+: > "$AUTH_TMP"
 
-${READONLY_USER} ALL=(ALL) NOPASSWD: \
-    /usr/bin/systemctl status *, \
-    /usr/bin/systemctl start *, \
-    /usr/bin/systemctl stop *, \
-    /usr/bin/systemctl restart *, \
-    /usr/bin/systemctl reload *, \
-    /usr/bin/journalctl -u * --no-pager, \
-    /usr/bin/journalctl -u * --no-pager -n *, \
-    /usr/bin/journalctl -u * --no-pager -f, \
-    /usr/bin/service * status, \
-    /usr/bin/cat /var/log/*, \
-    /usr/bin/tail /var/log/*, \
-    /usr/bin/tail -f /var/log/*, \
-    /usr/bin/ss *, \
-    /usr/bin/netstat *, \
-    /usr/bin/lsof *
+if [[ -f "$AUTH_KEYS" ]]; then
+  in_managed=false
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$MANAGED_BEGIN" ]]; then
+      [[ "$in_managed" == false ]] || { echo "nested managed key block" >&2; exit 65; }
+      in_managed=true
+      continue
+    fi
+    if [[ "$line" == "$MANAGED_END" ]]; then
+      [[ "$in_managed" == true ]] || { echo "unmatched managed key block" >&2; exit 65; }
+      in_managed=false
+      continue
+    fi
+    if [[ "$in_managed" == true ]]; then
+      continue
+    fi
+    if [[ -z "$line" || "$line" == \#* ]]; then
+      printf '%s\n' "$line" >> "$AUTH_TMP"
+    else
+      echo "refusing to overwrite unmanaged authorized_keys entry" >&2
+      exit 73
+    fi
+  done < "$AUTH_KEYS"
+  [[ "$in_managed" == false ]] || { echo "unterminated managed key block" >&2; exit 65; }
+fi
+{
+  printf '%s\n' "$MANAGED_BEGIN"
+  printf '%s %s\n' "$KEY_OPTIONS" "$PUBLIC_KEY"
+  printf '%s\n' "$MANAGED_END"
+} >> "$AUTH_TMP"
+install -o root -g root -m 444 "$AUTH_TMP" "$AUTH_KEYS"
+
+cat > "$SUDOERS_TMP" << SUDOERS
+# Managed by homelab-agent-access. Do not edit manually.
+${READONLY_USER} ALL=(root) NOPASSWD: ${ROOT_HELPER_PATH} ""
 SUDOERS
+chmod 440 "$SUDOERS_TMP"
+chown root:root "$SUDOERS_TMP"
+visudo -cf "$SUDOERS_TMP" >/dev/null
+install -o root -g root -m 440 "$SUDOERS_TMP" "$SUDOERS_FILE"
 
-# Add docker rules if docker is installed
-if command -v docker &>/dev/null; then
-  cat >> "$SUDOERS_FILE" << DOCKER
-
-${READONLY_USER} ALL=(ALL) NOPASSWD: /usr/bin/docker ps, /usr/bin/docker ps -a, /usr/bin/docker logs *, /usr/bin/docker stats --no-stream, /usr/bin/docker inspect *
-DOCKER
-  echo "[+] Docker sudo rules added"
-fi
-
-# Add kubectl rules if kubectl is installed
-if command -v kubectl &>/dev/null; then
-  KUBECTL_PATH="$(readlink -f "$(command -v kubectl)")"
-  cat >> "$SUDOERS_FILE" << KUBE
-
-${READONLY_USER} ALL=(ALL) NOPASSWD: ${KUBECTL_PATH} get *, ${KUBECTL_PATH} describe *, ${KUBECTL_PATH} logs *
-KUBE
-  echo "[+] kubectl sudo rules added"
-fi
-
-chmod 440 "$SUDOERS_FILE"
-chown root:root "$SUDOERS_FILE"
-echo "[+] Sudo rules installed at $SUDOERS_FILE"
-
-# ── Phase 6: Ownership & optional lock ──────────────────────────────────────
-chown -R "${READONLY_USER}:${READONLY_USER}" "$HOME_DIR/.readonly-bin"
-chown -R "${READONLY_USER}:${READONLY_USER}" "$HOME_DIR/.ssh"
-chown "${READONLY_USER}:${READONLY_USER}" "$HOME_DIR/.profile" "$HOME_DIR/.bashrc"
-
-# Handle lock/unlock idempotently
-if [[ "$LOCK_HOME" == "true" ]]; then
-  # Unlock first (in case of re-run), then lock
-  chattr -i "$PRIVATE_BIN"/* 2>/dev/null || true
-  chmod 755 "$HOME_DIR" 2>/dev/null || true
-  # Now apply the lock
-  chattr +i "$PRIVATE_BIN"/* 2>/dev/null || true
-  chmod 555 "$HOME_DIR"
-  echo "[+] Home directory locked to read-only (chattr +i, chmod 555)"
-elif [[ "$UNLOCK_HOME" == "true" ]]; then
-  chattr -i "$PRIVATE_BIN"/* 2>/dev/null || true
-  chmod 755 "$HOME_DIR"
-  echo "[+] Home directory unlocked (chmod 755, chattr -i)"
-else
-  # Auto-unlock if previously locked (re-run without --lock-home restores writes)
-  current_perms="$(stat -c '%a' "$HOME_DIR" 2>/dev/null || echo "")"
-  if [[ "$current_perms" == "555" ]]; then
-    chattr -i "$PRIVATE_BIN"/* 2>/dev/null || true
-    chmod 755 "$HOME_DIR"
-    echo "[+] Home directory auto-unlocked (was 555 from previous --lock-home, now 755)"
-  fi
-fi
-
-# ── Summary ─────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Done! ==="
-echo "User '$READONLY_USER' is ready."
-echo "Login:      ssh ${READONLY_USER}@$(hostname)"
-echo "Key:        $KEY_FILE (installed on server)"
-echo "Shell:      /bin/rbash (restricted)"
-echo "Commands:   $(ls "$PRIVATE_BIN" | tr '\n' ' ')"
-echo "Sudo access: systemctl, journalctl, cat/tail /var/log/*, ss, netstat, lsof"
+printf '%s\n' "Provisioned $READONLY_USER with forced operations:"
+printf '%s\n' '  status UNIT'
+printf '%s\n' '  logs UNIT LINES (1-500)'
+printf '%s\n' '  ports'
+printf '%s\n' '  hardware'
 REMOTE_SCRIPT

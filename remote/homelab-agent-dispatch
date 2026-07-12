@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+# This file is installed root-owned and used as an SSH authorized-key forced command.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+unset BASH_ENV ENV CDPATH SSH_AUTH_SOCK
+
+request="${SSH_ORIGINAL_COMMAND:-}"
+if [[ -z "$request" ]]; then
+  echo "No operation requested. Use: status UNIT | logs UNIT LINES | ports | hardware" >&2
+  exit 64
+fi
+
+if [[ "$request" == *$'\n'* || "$request" == *$'\r'* ]]; then
+  echo "Invalid operation" >&2
+  exit 64
+fi
+
+# The root helper parses and validates the request again. This user-side helper
+# deliberately passes no user-controlled arguments to sudo.
+printf '%s\n' "$request" | /usr/bin/sudo -n /usr/local/sbin/homelab-agent-dispatch-root

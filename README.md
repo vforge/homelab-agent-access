@@ -1,55 +1,66 @@
 # Homelab Agent Access
 
-Small, SSH-based tooling for giving an agent intentionally constrained access to
-homelab machines for service, log, network, and hardware inspection.
+Small SSH tooling for giving an agent narrowly scoped access to homelab
+machines for service, log, network, and hardware inspection.
 
 [![CI](https://github.com/vforge/homelab-agent-access/actions/workflows/ci.yml/badge.svg)](https://github.com/vforge/homelab-agent-access/actions/workflows/ci.yml)
 
-> **Status: experimental.** The current scripts are a migrated baseline, not a
-> complete security boundary for untrusted or prompt-injectable agents. Read
-> [SECURITY.md](SECURITY.md) before deploying them.
+> **Status: experimental.** This is a personal homelab project, not a complete
+> security boundary for hostile or prompt-injectable agents. Read
+> [SECURITY.md](SECURITY.md) before deploying it.
 
 ## Personal project disclaimer
 
 This is a personal homelab project published as-is for my own use. It may change,
-break, or be replaced without notice as my environment and requirements evolve.
-If you find it useful, great—but review it carefully and adapt it to your own
-machines, threat model, and operational practices. It is not a supported
-product, security certification, or recommendation, and you are responsible for
-any deployment and resulting damage.
+break, or be replaced without notice. If you find it useful, great—but review
+it carefully and adapt it to your machines, threat model, and operational
+practices. It is not a supported product or security certification; you are
+responsible for deployment and any resulting damage.
 
 See [DISCLAIMER.md](DISCLAIMER.md) for the short version.
 
-## Scope
+## How it works
 
-The current baseline provisions a separate SSH user with:
+An administrator runs the provisioning scripts once. They install:
 
-- A restricted Bash login shell and a command-path whitelist.
-- SSH authorized-key forwarding restrictions.
-- Optional, limited sudo rules for service and log inspection.
-- Create, audit, key-rotation, and removal workflows.
+1. A dedicated locked-password Unix account.
+2. A root-owned SSH forced-command dispatcher.
+3. A root-owned helper reachable only through an exact sudoers rule.
+4. An authorized key that disables forwarding, X11, PTY allocation, and user
+   SSH rc files.
 
-This project intentionally installs no monitoring daemon or agent package on
-remote machines. It assumes the required operating-system tools already exist.
+The agent then connects with the dedicated key and can request only these
+operations:
+
+```text
+status UNIT
+logs UNIT LINES
+ports
+hardware
+```
+
+The remote helper validates the request and runs fixed, read-oriented commands.
+There is no intended interactive shell or arbitrary command interface.
 
 ## Quick start
 
 ### Requirements
 
 - Bash and OpenSSH on the administering machine.
-- A privileged SSH login to the target. The current scripts perform privileged
-  operations directly and do not automatically invoke `sudo`.
-- A Debian/Ubuntu or Arch-like target, or a target with compatible `useradd`,
-  `adduser`, `chsh`, and `sudo` tools.
+- A privileged SSH login to the target. The provisioning script performs root
+  operations directly and does not automatically invoke `sudo`.
+- A Linux target with `bash`, `useradd`, `usermod`, `getent`, `install`, `base64`,
+  `sudo`, and `visudo`; Debian/Ubuntu and Arch-like systems are the targets.
 - A public SSH key stored outside this repository.
+- The target administrator's host key already present in `known_hosts`.
 
-Run the local syntax checks first:
+Run local checks first:
 
 ```bash
 make test
 ```
 
-Provision an account, inspect it, and remove it later:
+Provision, audit, and remove an account:
 
 ```bash
 ./bin/create root@server ~/.ssh/agent.pub --user agent
@@ -58,32 +69,48 @@ Provision an account, inspect it, and remove it later:
 ./bin/remove root@server agent
 ```
 
-See [`bin/README.md`](bin/README.md) for
-command options and the current remote changes. Agents can use
-[`skills/homelab-agent-access/SKILL.md`](skills/homelab-agent-access/SKILL.md) for a
-safe operating procedure.
+The scripts refuse to modify unmanaged existing accounts and preserve only
+comments plus the managed key block in `authorized_keys`. See
+[`bin/README.md`](bin/README.md) for the administrator command reference.
 
-## Security model
+## Agent usage
 
-The intended operator is an administrator provisioning a dedicated account for
-a trusted environment. The agent key should be treated as a separate,
-revocable identity—not as an administrator key.
+After provisioning, use the dedicated agent identity—not an administrator key:
 
-The current implementation is **not suitable as a hard security boundary** for
-an untrusted agent. In particular, `rbash` and a PATH whitelist are bypassable,
-the current sudo rules are broader than readonly access, and the optional home
-lock is only defense in depth.
+```bash
+ssh -o BatchMode=yes -o RequestTTY=no agent@server 'status example.service'
+ssh -o BatchMode=yes -o RequestTTY=no agent@server 'logs example.service 100'
+ssh -o BatchMode=yes -o RequestTTY=no agent@server 'ports'
+ssh -o BatchMode=yes -o RequestTTY=no agent@server 'hardware'
+```
 
-The planned direction is a forced-command dispatcher with root-owned helpers
-that accept a small, validated set of read-only operations. Until that work is
-complete, do not deploy this baseline to production or to hosts where the agent
-may be actively adversarial.
+See [`skills/homelab-agent-access/SKILL.md`](skills/homelab-agent-access/SKILL.md)
+for agent-side operating instructions. Output may contain secrets or sensitive
+host data; return only the minimum required and redact it before sharing.
+
+## Security model and limitations
+
+This design removes the interactive `rbash`/PATH whitelist and exposes a small
+forced-command protocol instead. It is still not a VM, container, MAC policy,
+or complete sandbox. In particular:
+
+- Service names and logs are not yet restricted to a per-host allowlist.
+- Logs and hardware output may contain sensitive data.
+- The helper depends on the target's systemd, journal, socket, and hardware
+  tools being available.
+- The implementation is Linux-oriented and assumes GNU user-management tools.
+- A compromised dedicated key can still query everything exposed by the helper.
+- The account and key should be used only for the intended homelab scope.
+
+Do not add service mutation, arbitrary file reads, arbitrary command arguments,
+or shell interpretation to the protocol without a separate security review.
 
 ## Repository layout
 
 ```text
 .
-├── bin/  # Current provisioning, audit, and removal scripts
+├── bin/                    # Administrator provisioning, audit, and removal
+├── remote/                 # Root-owned helper templates installed on targets
 ├── skills/                 # Agent-facing usage skill
 ├── tests/                  # Local validation helpers
 ├── AGENTS.md               # Instructions for automated contributors
@@ -94,19 +121,18 @@ may be actively adversarial.
 
 ## Development
 
-Changes to remote execution, SSH options, sudoers, filesystem permissions, or
-input parsing are security-sensitive. Keep changes small and document the
+Changes to SSH options, sudoers, remote parsing, filesystem ownership, or
+helper commands are security-sensitive. Keep changes small and document the
 threat-model impact.
 
 ```bash
 make test
-bash -n bin/create
-bash -n bin/list
-bash -n bin/remove
+bash -n bin/create bin/list bin/remove
+bash -n remote/homelab-agent-dispatch remote/homelab-agent-dispatch-root
 ```
 
 Tests must not contact real machines. Use disposable VMs or containers for
-integration testing and never commit host-specific configuration, credentials,
+integration tests and never commit host-specific configuration, credentials,
 private keys, or real logs.
 
 ## License

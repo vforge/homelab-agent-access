@@ -1,16 +1,13 @@
-# Homelab Agent Access command reference
+# Administrator command reference
 
-Provision and audit a separate SSH account for read-oriented inspection of a
-homelab machine.
+These commands provision and audit the agent account. They are for a trusted
+administrator, not for the agent using the resulting account.
 
-> **Security warning:** This is an experimental baseline, not a complete
-> security boundary for untrusted agents. `rbash`, the command whitelist, and
-> home locking are defense-in-depth measures only. Review the repository
-> [security policy](../SECURITY.md) before deployment.
+> **Security warning:** This is experimental homelab tooling. Test on a
+disposable target, read [`SECURITY.md`](../SECURITY.md), and verify the remote
+host key before provisioning.
 
-## Commands
-
-### Create or update
+## Create or update
 
 ```bash
 ./bin/create root@server ~/.ssh/agent.pub --user agent
@@ -18,15 +15,18 @@ homelab machine.
 
 Options:
 
-- `--user <name>` — choose the remote account name.
-- `--commands "cmd1,cmd2,..."` — replace the default command list.
-- `--lock-home` — attempt to make the home directory non-writable.
-- `--unlock-home` — undo the home-directory lock.
+- `--user <name>` — remote account name. If omitted, it is derived from the
+  public-key filename.
+- `--help` — show usage.
 
-The script is intended to support repeated provisioning, key rotation, and
-command-list updates. Validate changes on a disposable target first.
+The command requires a privileged SSH login. It uses strict host-key checking
+and safely encodes provisioning payloads before sending them to the target.
 
-### Audit
+The target account is marked under `/etc/homelab-agent-access/` and is refused
+if an existing account is not managed by this tool. Re-running the command
+rotates the managed key and updates the helper files.
+
+## Audit
 
 ```bash
 ./bin/list root@server
@@ -34,44 +34,57 @@ command-list updates. Validate changes on a disposable target first.
 ./bin/list root@server --json
 ```
 
-The audit command reports accounts using an `rbash` login shell, available
-whitelist entries, authorized-key metadata, sudoers entries, and home
-permissions.
+`--json` requires `jq` on the target. The audit reports managed accounts,
+account state, home directory, shell, managed-key presence, sudo-helper
+presence, and exposed operations.
 
-### Remove
+## Remove
 
 ```bash
 ./bin/remove root@server agent
 ./bin/remove root@server agent --keep-home
 ```
 
-Removal deletes the generated sudoers file, restricted authorized-key entries,
-and the account. `--keep-home` leaves the home directory in place.
+Removal deletes the managed key block, the per-account sudoers rule, the
+account marker, and the account. `--keep-home` preserves the home directory.
+Unmanaged accounts are never removed.
 
-## Current remote changes
+## Installed remote interface
 
-The current baseline may modify:
+The authorized key invokes the root-owned dispatcher instead of an interactive
+shell. The only accepted requests are:
 
-- A dedicated user account and its login shell.
-- `~agent/.readonly-bin/` symlinks for the selected commands.
-- `~agent/.profile` and `~agent/.bashrc`.
-- `~agent/.ssh/authorized_keys`.
-- `/etc/sudoers.d/readonly-agent`.
-- Optional home-directory permissions and filesystem attributes.
+```text
+status UNIT
+logs UNIT LINES
+ports
+hardware
+```
 
-The scripts currently require a privileged SSH login; they do not automatically
-use `sudo` for the provisioning connection.
+The root helper validates unit names and limits log requests to 500 lines. It
+uses fixed absolute command paths and does not interpret arbitrary shell input.
 
-## Known limitations
+The generated key disables port forwarding, X11 forwarding, agent forwarding,
+PTY allocation, and per-user SSH rc files. The generated sudoers rule permits
+only the root helper with no command-line arguments.
 
-- SSH argument serialization in the provisioning path needs hardening.
-- `rbash` and a PATH whitelist are not a robust sandbox.
-- Several default commands can provide shell escapes, file writes, or network
-access.
-- The sudoers rules include mutating service operations and broad wildcards.
-- The optional home lock does not guarantee that every created file is
-non-writable.
-- Host-key handling currently uses `StrictHostKeyChecking=accept-new`.
+## Target requirements
 
-These limitations are tracked at the repository level. Do not use the current
-baseline for hostile or untrusted agents.
+The target must provide:
+
+- Bash, `useradd`, `usermod`, `getent`, `install`, and `base64`.
+- `sudo` at `/usr/bin/sudo` and `visudo`.
+- A privileged SSH login for provisioning.
+
+`systemctl`, `journalctl`, `ss`, `lscpu`, `lsblk`, `free`, and `sensors` are
+used only when available. Missing inspection tools produce a clear error or
+partial hardware output.
+
+## Migration and limitations
+
+Accounts created by older versions that lack the versioned management marker
+are intentionally refused. Remove or migrate them manually after review.
+
+The forced command is a narrow interface, but it is not a complete OS sandbox.
+Logs may expose secrets, and a compromised agent key can query all operations
+available on that host. See [`SECURITY.md`](../SECURITY.md).

@@ -1,0 +1,89 @@
+#!/bin/bash
+set -euo pipefail
+
+# This file is installed root-owned and is the only privileged operation
+# interface exposed to the provisioned account.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+umask 077
+
+usage() {
+  echo "Usage: status UNIT | logs UNIT LINES | ports | hardware" >&2
+  exit 64
+}
+
+IFS= read -r request || usage
+# A request is exactly one line. Reject trailing input rather than ignoring it.
+if IFS= read -r _; then
+  echo "Invalid operation: multiple input lines" >&2
+  exit 64
+fi
+
+UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
+
+if [[ "$request" =~ ^status[[:space:]]+($UNIT_PATTERN)$ ]]; then
+  unit="${BASH_REMATCH[1]}"
+  if [[ -x /usr/bin/systemctl ]]; then
+    exec /usr/bin/systemctl show --no-pager \
+      --property=Id,LoadState,ActiveState,SubState,UnitFileState "$unit"
+  fi
+  echo "systemctl is not available on this host" >&2
+  exit 69
+fi
+
+if [[ "$request" =~ ^logs[[:space:]]+($UNIT_PATTERN)[[:space:]]+([0-9]{1,4})$ ]]; then
+  unit="${BASH_REMATCH[1]}"
+  lines="${BASH_REMATCH[2]}"
+  lines=$((10#$lines))
+  if (( lines < 1 || lines > 500 )); then
+    echo "Log line limit must be between 1 and 500" >&2
+    exit 64
+  fi
+  if [[ -x /usr/bin/journalctl ]]; then
+    exec /usr/bin/journalctl --no-pager --output=short-iso \
+      -n "$lines" -u "$unit"
+  fi
+  echo "journalctl is not available on this host" >&2
+  exit 69
+fi
+
+if [[ "$request" == ports ]]; then
+  if [[ -x /usr/bin/ss ]]; then
+    exec /usr/bin/ss -lntup
+  elif [[ -x /bin/ss ]]; then
+    exec /bin/ss -lntup
+  fi
+  echo "ss is not available on this host" >&2
+  exit 69
+fi
+
+if [[ "$request" == hardware ]]; then
+  found=0
+  printf '%s\n' '== CPU =='
+  if [[ -x /usr/bin/lscpu ]]; then
+    /usr/bin/lscpu
+    found=1
+  fi
+  printf '%s\n' '== Block devices =='
+  if [[ -x /usr/bin/lsblk ]]; then
+    /usr/bin/lsblk -o NAME,TYPE,SIZE,MODEL,ROTA,MOUNTPOINT
+    found=1
+  fi
+  printf '%s\n' '== Memory =='
+  if [[ -x /usr/bin/free ]]; then
+    /usr/bin/free -h
+    found=1
+  fi
+  printf '%s\n' '== Sensors =='
+  if [[ -x /usr/bin/sensors ]]; then
+    /usr/bin/sensors
+    found=1
+  else
+    echo 'sensors is not installed'
+  fi
+  (( found == 1 )) && exit 0
+  echo "No supported hardware commands are available on this host" >&2
+  exit 69
+fi
+
+usage

@@ -1,7 +1,10 @@
-.PHONY: test syntax
+.PHONY: test syntax cli
 
-test: syntax
+test: syntax cli
 	@git diff --check
 
 syntax:
 	@./tests/syntax.sh
+
+cli:
+	@./tests/cli.sh

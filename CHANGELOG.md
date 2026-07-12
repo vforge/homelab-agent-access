@@ -4,11 +4,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-- Add an agent-facing skill with safe usage rules for the provisioning tools.
-- Harden the provisioning transport and input serialization.
-- Replace the interactive whitelist with a forced-command dispatcher.
-- Replace wildcard sudoers rules with exact root-owned read-only helpers.
 - Add disposable-host integration tests.
+- Add per-host service and log allowlists.
+
+## [0.2.0] - 2026-07-12
+
+- Replace the interactive whitelist with a forced-command dispatcher.
+- Replace wildcard sudoers rules with an exact no-argument root helper.
+- Add fixed status, bounded logs, ports, and hardware operations.
+- Add an agent-facing skill for using the provisioned account.
+- Harden provisioning transport, account lifecycle, and input validation.
+- Add local CLI and request-validation tests.
 
 ## [0.1.0] - 2026-07-12
 
