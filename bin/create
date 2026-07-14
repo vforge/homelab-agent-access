@@ -192,7 +192,7 @@ if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root
   exit 64
 fi
 
-for required in id getent useradd usermod install mktemp base64 sudo visudo stat cmp; do
+for required in id getent useradd usermod userdel install mktemp base64 sudo visudo stat cmp cp mv rm rmdir chown chmod; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -211,9 +211,50 @@ LOG_ALLOWLIST_TMP="$(mktemp)"
 AUTH_TMP="$(mktemp)"
 SUDOERS_TMP="$(mktemp)"
 MARKER_TMP=""
+BACKUP_DIR=""
+NEW_ACCOUNT=false
+TRANSACTION_ACTIVE=false
+CREATED_MANAGED_DIR=false
+CREATED_ACCOUNTS_DIR=false
+CREATED_SBIN_DIR=false
+CREATED_SSH_DIR=false
+BACKUP_TARGETS=()
+BACKUP_LABELS=()
+
+rollback_transaction() {
+  local index target label
+  set +e
+  for (( index=${#BACKUP_TARGETS[@]}-1; index>=0; index-- )); do
+    target="${BACKUP_TARGETS[$index]}"
+    label="${BACKUP_LABELS[$index]}"
+    rm -f -- "$target"
+    if [[ -e "$BACKUP_DIR/$label" || -L "$BACKUP_DIR/$label" ]]; then
+      cp -a -- "$BACKUP_DIR/$label" "$target"
+    fi
+  done
+  if [[ "$NEW_ACCOUNT" == true ]] && id "$READONLY_USER" >/dev/null 2>&1; then
+    userdel --remove "$READONLY_USER" >/dev/null 2>&1 || true
+  fi
+  [[ "$CREATED_ACCOUNTS_DIR" == true ]] && rmdir "$ACCOUNTS_DIR" 2>/dev/null || true
+  [[ "$CREATED_MANAGED_DIR" == true ]] && rmdir "$MANAGED_DIR" 2>/dev/null || true
+  [[ "$CREATED_SSH_DIR" == true ]] && rmdir "$SSH_DIR" 2>/dev/null || true
+  [[ "$CREATED_SBIN_DIR" == true ]] && rmdir /usr/local/sbin 2>/dev/null || true
+}
+
 cleanup() {
+  local rc=$?
+  set +e
+  if [[ "$rc" -ne 0 ]]; then
+    if [[ "$TRANSACTION_ACTIVE" == true ]]; then
+      rollback_transaction
+    elif [[ "$NEW_ACCOUNT" == true ]] && id "$READONLY_USER" >/dev/null 2>&1; then
+      userdel --remove "$READONLY_USER" >/dev/null 2>&1 || true
+    fi
+  fi
   rm -f "$DISPATCHER_TMP" "$ROOT_HELPER_TMP" "$STATUS_ALLOWLIST_TMP" \
     "$LOG_ALLOWLIST_TMP" "$AUTH_TMP" "$SUDOERS_TMP" "$MARKER_TMP"
+  [[ -n "$BACKUP_DIR" ]] && rm -rf "$BACKUP_DIR"
+  return "$rc"
 }
 trap cleanup EXIT
 printf '%s' "$DISPATCHER_B64" | base64 -d > "$DISPATCHER_TMP"
@@ -253,11 +294,8 @@ SUDOERS_FILE="/etc/sudoers.d/homelab-agent-$READONLY_USER"
 MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
 MANAGED_END="# END homelab-agent-access managed key"
 KEY_OPTIONS='no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc,command="/usr/local/sbin/homelab-agent-dispatch"'
-NEW_ACCOUNT=false
 MIGRATE_LEGACY=false
 
-install -d -o root -g root -m 755 "$MANAGED_DIR"
-install -d -o root -g root -m 755 "$ACCOUNTS_DIR"
 if id "$READONLY_USER" >/dev/null 2>&1; then
   if [[ -f "$MARKER" && ! -L "$MARKER" ]]; then
     : # Version-3 metadata is verified after reading the passwd entry.
@@ -284,7 +322,8 @@ fi
 
 ACCOUNT_UID=""
 HOME_DIR=""
-IFS=: read -r _ _ ACCOUNT_UID _ _ HOME_DIR _ < <(getent passwd "$READONLY_USER")
+ACCOUNT_SHELL=""
+IFS=: read -r _ _ ACCOUNT_UID _ _ HOME_DIR ACCOUNT_SHELL < <(getent passwd "$READONLY_USER")
 if [[ ! "$ACCOUNT_UID" =~ ^[0-9]+$ || "$ACCOUNT_UID" -eq 0 ]]; then
   echo "invalid or privileged account uid" >&2
   exit 65
@@ -292,6 +331,10 @@ fi
 if [[ "$HOME_DIR" != "$EXPECTED_HOME" || ! -d "$HOME_DIR" || -L "$HOME_DIR" || -L /home ]]; then
   echo "unsafe account home directory: $HOME_DIR" >&2
   exit 65
+fi
+if [[ "$ACCOUNT_SHELL" != /bin/bash ]]; then
+  echo "managed account has an unexpected login shell: $ACCOUNT_SHELL" >&2
+  exit 73
 fi
 
 EXPECTED_MARKER="$(printf 'version=3\nuser=%s\nuid=%s\nhome=%s\n' \
@@ -304,27 +347,64 @@ if [[ "$MIGRATE_LEGACY" == true && "$HOME_DIR" != "$EXPECTED_HOME" ]]; then
   echo "legacy account requires manual migration because its home is nonstandard" >&2
   exit 73
 fi
-if [[ "$NEW_ACCOUNT" == false && "$(stat -c '%u' "$HOME_DIR")" -ne 0 ]]; then
-  echo "managed account home is not root-owned" >&2
-  exit 73
+if [[ "$NEW_ACCOUNT" == false ]]; then
+  if [[ "$(stat -c '%u' "$HOME_DIR")" -ne 0 ]]; then
+    echo "managed account home is not root-owned" >&2
+    exit 73
+  fi
+  if [[ "$(stat -c '%a' "$HOME_DIR")" != 755 ]]; then
+    echo "managed account home has unexpected permissions" >&2
+    exit 73
+  fi
 fi
 
-# The account is controlled by the forced key, not by a writable shell profile.
-usermod --shell /bin/bash --lock "$READONLY_USER"
-chown root:root "$HOME_DIR"
-chmod 755 "$HOME_DIR"
+secure_directory() {
+  local path="$1" mode
+  [[ -d "$path" && ! -L "$path" ]] || {
+    echo "unsafe managed directory: $path" >&2
+    exit 73
+  }
+  [[ "$(stat -c '%u' "$path")" -eq 0 ]] || {
+    echo "managed directory is not root-owned: $path" >&2
+    exit 73
+  }
+  mode="$(stat -c '%a' "$path")"
+  (( (8#$mode & 0022) == 0 )) || {
+    echo "managed directory is group- or world-writable: $path" >&2
+    exit 73
+  }
+}
 
-install -d -o root -g root -m 755 /usr/local/sbin
-install -o root -g root -m 755 "$DISPATCHER_TMP" "$DISPATCHER_PATH"
-install -o root -g root -m 755 "$ROOT_HELPER_TMP" "$ROOT_HELPER_PATH"
-install -o root -g root -m 444 "$STATUS_ALLOWLIST_TMP" "$STATUS_ALLOWLIST_PATH"
-install -o root -g root -m 444 "$LOG_ALLOWLIST_TMP" "$LOG_ALLOWLIST_PATH"
+secure_directory /home
+secure_directory /etc/sudoers.d
+[[ ! -e "$MANAGED_DIR" && ! -L "$MANAGED_DIR" ]] || secure_directory "$MANAGED_DIR"
+[[ ! -e "$ACCOUNTS_DIR" && ! -L "$ACCOUNTS_DIR" ]] || secure_directory "$ACCOUNTS_DIR"
+[[ ! -e /usr/local/sbin && ! -L /usr/local/sbin ]] || secure_directory /usr/local/sbin
 
 SSH_DIR="$HOME_DIR/.ssh"
 AUTH_KEYS="$SSH_DIR/authorized_keys"
-install -d -o root -g root -m 700 "$SSH_DIR"
-: > "$AUTH_TMP"
+if [[ -e "$SSH_DIR" || -L "$SSH_DIR" ]]; then
+  [[ -d "$SSH_DIR" && ! -L "$SSH_DIR" ]] || {
+    echo "unsafe account SSH directory" >&2
+    exit 73
+  }
+  if [[ "$NEW_ACCOUNT" == true ]]; then
+    echo "new account unexpectedly contains an SSH directory" >&2
+    exit 73
+  fi
+  secure_directory "$SSH_DIR"
+  [[ "$(stat -c '%a' "$SSH_DIR")" == 700 ]] || {
+    echo "managed account SSH directory has unsafe permissions" >&2
+    exit 73
+  }
+fi
+if [[ -L "$AUTH_KEYS" || ( -e "$AUTH_KEYS" && ! -f "$AUTH_KEYS" ) ]]; then
+  echo "unsafe authorized_keys path" >&2
+  exit 73
+fi
 
+# Build and validate every content artifact before changing global files.
+: > "$AUTH_TMP"
 if [[ -f "$AUTH_KEYS" ]]; then
   in_managed=false
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -355,7 +435,6 @@ fi
   printf '%s %s\n' "$KEY_OPTIONS" "$PUBLIC_KEY"
   printf '%s\n' "$MANAGED_END"
 } >> "$AUTH_TMP"
-install -o root -g root -m 444 "$AUTH_TMP" "$AUTH_KEYS"
 
 cat > "$SUDOERS_TMP" << SUDOERS
 # Managed by homelab-agent-access. Do not edit manually.
@@ -364,15 +443,89 @@ SUDOERS
 chmod 440 "$SUDOERS_TMP"
 chown root:root "$SUDOERS_TMP"
 visudo -cf "$SUDOERS_TMP" >/dev/null
-install -o root -g root -m 440 "$SUDOERS_TMP" "$SUDOERS_FILE"
 
 MARKER_TMP="$(mktemp)"
 printf '%s\n' "$EXPECTED_MARKER" > "$MARKER_TMP"
-install -o root -g root -m 400 "$MARKER_TMP" "$MARKER"
-rm -f "$MARKER_TMP"
+
+backup_target() {
+  local target="$1" label="$2"
+  [[ ! -L "$target" ]] || {
+    echo "refusing to replace symlinked managed file: $target" >&2
+    exit 73
+  }
+  if [[ -e "$target" && ! -f "$target" ]]; then
+    echo "refusing to replace non-file managed path: $target" >&2
+    exit 73
+  fi
+  BACKUP_TARGETS+=("$target")
+  BACKUP_LABELS+=("$label")
+  if [[ -e "$target" ]]; then
+    cp -a -- "$target" "$BACKUP_DIR/$label"
+  fi
+}
+
+atomic_install() {
+  local source="$1" target="$2" mode="$3" temporary
+  temporary="${target}.new.$$"
+  rm -f -- "$temporary"
+  if ! install -o root -g root -m "$mode" "$source" "$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  if ! mv -f -- "$temporary" "$target"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
+BACKUP_DIR="$(mktemp -d)"
+TRANSACTION_ACTIVE=true
+if [[ ! -e "$MANAGED_DIR" ]]; then
+  install -d -o root -g root -m 755 "$MANAGED_DIR"
+  CREATED_MANAGED_DIR=true
+fi
+if [[ ! -e "$ACCOUNTS_DIR" ]]; then
+  install -d -o root -g root -m 755 "$ACCOUNTS_DIR"
+  CREATED_ACCOUNTS_DIR=true
+fi
+if [[ ! -e /usr/local/sbin ]]; then
+  install -d -o root -g root -m 755 /usr/local/sbin
+  CREATED_SBIN_DIR=true
+fi
+
+backup_target "$DISPATCHER_PATH" dispatcher
+backup_target "$ROOT_HELPER_PATH" root-helper
+backup_target "$STATUS_ALLOWLIST_PATH" status-allowlist
+backup_target "$LOG_ALLOWLIST_PATH" log-allowlist
+backup_target "$AUTH_KEYS" authorized-keys
+backup_target "$SUDOERS_FILE" sudoers
+backup_target "$MARKER" marker
+if [[ "$MIGRATE_LEGACY" == true ]]; then
+  backup_target "$LEGACY_MARKER" legacy-marker
+fi
+
+# The account is controlled by the forced key, not by a writable shell profile.
+usermod --lock "$READONLY_USER"
+if [[ "$NEW_ACCOUNT" == true ]]; then
+  chown root:root "$HOME_DIR"
+  chmod 755 "$HOME_DIR"
+fi
+if [[ ! -e "$SSH_DIR" ]]; then
+  install -d -o root -g root -m 700 "$SSH_DIR"
+  CREATED_SSH_DIR=true
+fi
+
+atomic_install "$DISPATCHER_TMP" "$DISPATCHER_PATH" 755
+atomic_install "$ROOT_HELPER_TMP" "$ROOT_HELPER_PATH" 755
+atomic_install "$STATUS_ALLOWLIST_TMP" "$STATUS_ALLOWLIST_PATH" 400
+atomic_install "$LOG_ALLOWLIST_TMP" "$LOG_ALLOWLIST_PATH" 400
+atomic_install "$AUTH_TMP" "$AUTH_KEYS" 400
+atomic_install "$SUDOERS_TMP" "$SUDOERS_FILE" 440
+atomic_install "$MARKER_TMP" "$MARKER" 400
 if [[ "$MIGRATE_LEGACY" == true ]]; then
   rm -f "$LEGACY_MARKER"
 fi
+TRANSACTION_ACTIVE=false
 
 printf '%s\n' "Provisioned $READONLY_USER with forced operations:"
 printf '%s\n' '  status UNIT (status allowlist enforced)'

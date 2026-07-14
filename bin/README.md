@@ -43,8 +43,10 @@ helper until `create` is run again with both allowlist files.
 
 The target account is recorded under `/etc/homelab-agent-access/accounts/`
 with its username, UID, and canonical `/home/USER` path. Existing accounts are
-refused unless that metadata matches passwd state. Re-running the command
-rotates the managed key and updates the helper files.
+refused unless that metadata matches passwd state. The command preflights the
+managed key and sudoers content before replacing global files, uses same-directory
+atomic file replacements, and restores prior files if installation fails.
+Re-running the command rotates the managed key and updates the helper files.
 
 ## Audit
 

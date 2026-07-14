@@ -25,6 +25,8 @@ by the helper.
 ## Current security properties
 
 - Provisioning payloads are encoded before being passed through SSH arguments.
+- Provisioning preflights managed files, validates sudoers before installation,
+  installs file replacements atomically, and rolls them back on failure.
 - Usernames, public keys, allowlist unit names, request unit names, and log
   limits are validated.
 - Root-owned per-host status and log allowlists are checked by the root helper.

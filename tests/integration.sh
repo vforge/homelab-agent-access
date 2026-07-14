@@ -93,6 +93,7 @@ AGENT_KEY_2="$WORK_DIR/agent-key-2"
 HOST_KEY="$WORK_DIR/host-key"
 STATUS_ALLOWLIST="$WORK_DIR/status-allowlist"
 LOG_ALLOWLIST="$WORK_DIR/log-allowlist"
+CHANGED_ALLOWLIST="$WORK_DIR/changed-allowlist"
 PORT="$(python3 - <<'PY'
 import socket
 with socket.socket() as sock:
@@ -109,6 +110,7 @@ ssh-keygen -q -t ed25519 -N '' -f "$AGENT_KEY_2"
 ssh-keygen -q -t ed25519 -N '' -f "$HOST_KEY"
 printf '%s\n' 'ssh.service' > "$STATUS_ALLOWLIST"
 printf '%s\n' 'ssh.service' > "$LOG_ALLOWLIST"
+printf '%s\n' 'changed.service' > "$CHANGED_ALLOWLIST"
 
 sudo install -d -o root -g root -m 755 /run/sshd
 sudo rm -rf "$ADMIN_AUTH_DIR"
@@ -225,6 +227,22 @@ ssh -o BatchMode=yes -o RequestTTY=no admin-target \
   jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
     .state == "present" and .authorized_key == "present" and
     .status_allowlist == "present" and .log_allowlist == "present")' >/dev/null
+
+# A preflight failure must not replace shared allowlists or other artifacts.
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "printf '%s\\n' unmanaged-entry >> /home/$TEST_USER/.ssh/authorized_keys"
+set +e
+"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY_2.pub" --user "$TEST_USER" \
+  --status-allowlist "$CHANGED_ALLOWLIST" \
+  --log-allowlist "$CHANGED_ALLOWLIST" \
+  > "$WORK_DIR/preflight.stdout" 2> "$WORK_DIR/preflight.stderr"
+preflight_rc=$?
+set -e
+[[ "$preflight_rc" -eq 73 ]]
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "grep -qx 'ssh.service' /etc/homelab-agent-access/status-allowlist"
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "sed -i '\$d' /home/$TEST_USER/.ssh/authorized_keys"
 
 # Key rotation must accept the new key and reject the old key.
 "$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY_2.pub" --user "$TEST_USER" \
