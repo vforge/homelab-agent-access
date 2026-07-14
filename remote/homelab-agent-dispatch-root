@@ -7,9 +7,48 @@ PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 umask 077
 
+STATUS_ALLOWLIST="/etc/homelab-agent-access/status-allowlist"
+LOG_ALLOWLIST="/etc/homelab-agent-access/log-allowlist"
+UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
+
 usage() {
   echo "Usage: status UNIT | logs UNIT LINES | ports | hardware" >&2
   exit 64
+}
+
+allowlist_contains() {
+  local file="$1" requested="$2" line
+  if [[ ! -f "$file" || -L "$file" || ! -r "$file" ]]; then
+    echo "allowlist is missing or inaccessible: $file" >&2
+    return 69
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" != *$'\r'* ]] || {
+      echo "allowlist contains a carriage return: $file" >&2
+      return 69
+    }
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^$UNIT_PATTERN$ ]] || {
+      echo "allowlist contains an invalid systemd unit: $file" >&2
+      return 69
+    }
+    [[ "$line" == "$requested" ]] && return 0
+  done < "$file"
+  return 1
+}
+
+require_allowed() {
+  local rc
+  if allowlist_contains "$1" "$2"; then
+    return 0
+  else
+    rc=$?
+  fi
+  if (( rc == 1 )); then
+    echo "systemd unit is not allowlisted: $2" >&2
+    exit 77
+  fi
+  exit "$rc"
 }
 
 IFS= read -r request || usage
@@ -19,10 +58,9 @@ if IFS= read -r _; then
   exit 64
 fi
 
-UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
-
 if [[ "$request" =~ ^status[[:space:]]+($UNIT_PATTERN)$ ]]; then
   unit="${BASH_REMATCH[1]}"
+  require_allowed "$STATUS_ALLOWLIST" "$unit"
   if [[ -x /usr/bin/systemctl ]]; then
     exec /usr/bin/systemctl show --no-pager \
       --property=Id,LoadState,ActiveState,SubState,UnitFileState "$unit"
@@ -34,6 +72,7 @@ fi
 if [[ "$request" =~ ^logs[[:space:]]+($UNIT_PATTERN)[[:space:]]+([0-9]{1,4})$ ]]; then
   unit="${BASH_REMATCH[1]}"
   lines="${BASH_REMATCH[2]}"
+  require_allowed "$LOG_ALLOWLIST" "$unit"
   lines=$((10#$lines))
   if (( lines < 1 || lines > 500 )); then
     echo "Log line limit must be between 1 and 500" >&2

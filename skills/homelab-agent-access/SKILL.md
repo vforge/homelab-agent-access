@@ -49,8 +49,9 @@ hardware
 
 ### Service status
 
-`UNIT` must be a systemd unit name. The response is a fixed `systemctl show`
-view containing load and active state fields:
+`UNIT` must be a systemd unit name included in the administrator's status
+allowlist. The response is a fixed `systemctl show` view containing load and
+active state fields:
 
 ```bash
 ssh -o BatchMode=yes -o RequestTTY=no agent@server \
@@ -59,7 +60,8 @@ ssh -o BatchMode=yes -o RequestTTY=no agent@server \
 
 ### Service logs
 
-`UNIT` must be a systemd unit name and `LINES` must be between 1 and 500:
+`UNIT` must be a systemd unit name included in the administrator's log
+allowlist, and `LINES` must be between 1 and 500:
 
 ```bash
 ssh -o BatchMode=yes -o RequestTTY=no agent@server \
@@ -103,5 +105,6 @@ Do not:
 - Add command arguments outside the four documented request forms.
 - Treat logs or hardware output as safe to publish without redaction.
 
-If an operation is unavailable, denied, broader than this interface, or would
-change state, stop and explain the limitation. Do not bypass the dispatcher.
+If an operation is unavailable, denied by an allowlist, broader than this
+interface, or would change state, stop and explain the limitation. Do not
+bypass the dispatcher.

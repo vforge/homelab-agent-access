@@ -26,7 +26,8 @@ An administrator runs the provisioning scripts once. They install:
 1. A dedicated locked-password Unix account.
 2. A root-owned SSH forced-command dispatcher.
 3. A root-owned helper reachable only through an exact sudoers rule.
-4. An authorized key that disables forwarding, X11, PTY allocation, and user
+4. Root-owned per-host status and log unit allowlists.
+5. An authorized key that disables forwarding, X11, PTY allocation, and user
    SSH rc files.
 
 The agent then connects with the dedicated key and can request only these
@@ -60,14 +61,21 @@ Run local checks first:
 make test
 ```
 
-Provision, audit, and remove an account:
+Create host-specific unit allowlists outside this repository, one unit per
+line, then provision, audit, and remove an account:
 
 ```bash
-./bin/create root@server ~/.ssh/agent.pub --user agent
+./bin/create root@server ~/.ssh/agent.pub --user agent \
+  --status-allowlist /path/to/status-units.txt \
+  --log-allowlist /path/to/log-units.txt
 ./bin/list root@server
 ./bin/list root@server --json
 ./bin/remove root@server agent
 ```
+
+Blank and `#` comment lines are ignored. An empty allowlist denies its
+operation. `status` and `logs` requests for units absent from their respective
+allowlist are rejected; `ports` and `hardware` are unaffected.
 
 The scripts refuse to modify unmanaged existing accounts and preserve only
 comments plus the managed key block in `authorized_keys`. See
@@ -94,7 +102,8 @@ This design removes the interactive `rbash`/PATH whitelist and exposes a small
 forced-command protocol instead. It is still not a VM, container, MAC policy,
 or complete sandbox. In particular:
 
-- Service names and logs are not yet restricted to a per-host allowlist.
+- Status and log unit names are restricted by root-owned per-host allowlists,
+  but those lists must be reviewed and maintained by the administrator.
 - Logs and hardware output may contain sensitive data.
 - The helper depends on the target's systemd, journal, socket, and hardware
   tools being available.
@@ -127,6 +136,7 @@ threat-model impact.
 
 ```bash
 make test
+make integration  # requires an ephemeral Linux host and passwordless sudo
 bash -n bin/create bin/list bin/remove
 bash -n remote/homelab-agent-dispatch remote/homelab-agent-dispatch-root
 ```

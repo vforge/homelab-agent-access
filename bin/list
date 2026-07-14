@@ -61,6 +61,12 @@ fi
 
 MANAGED_DIR="/etc/homelab-agent-access"
 SUDOERS_DIR="/etc/sudoers.d"
+STATUS_ALLOWLIST="$MANAGED_DIR/status-allowlist"
+LOG_ALLOWLIST="$MANAGED_DIR/log-allowlist"
+status_allowlist_state=missing
+log_allowlist_state=missing
+[[ -f "$STATUS_ALLOWLIST" && ! -L "$STATUS_ALLOWLIST" ]] && status_allowlist_state=present
+[[ -f "$LOG_ALLOWLIST" && ! -L "$LOG_ALLOWLIST" ]] && log_allowlist_state=present
 users=()
 if [[ -d "$MANAGED_DIR" ]]; then
   for marker in "$MANAGED_DIR"/*; do
@@ -111,8 +117,11 @@ if [[ "$FORMAT" == json ]]; then
       --arg state "$state" \
       --arg key_state "$key_state" \
       --arg sudo_state "$sudo_state" \
+      --arg status_allowlist "$status_allowlist_state" \
+      --arg log_allowlist "$log_allowlist_state" \
       '. + [{user: $user, home: $home, shell: $shell, state: $state,
         authorized_key: $key_state, sudoers: $sudo_state,
+        status_allowlist: $status_allowlist, log_allowlist: $log_allowlist,
         operations: ["status", "logs", "ports", "hardware"]}]' <<< "$result")"
   done
   jq . <<< "$result"
@@ -150,6 +159,8 @@ for user in "${users[@]}"; do
   printf '  State:         %s\n' "$state"
   printf '  Managed key:   %s\n' "$key_state"
   printf '  Sudo helper:   %s\n' "$sudo_state"
-  printf '  Operations:    status, logs, ports, hardware\n\n'
+  printf '  Status list:   %s\n' "$status_allowlist_state"
+  printf '  Log list:      %s\n' "$log_allowlist_state"
+  printf '  Operations:    status, logs, ports, hardware (unit allowlists apply)\n\n'
 done
 REMOTE_SCRIPT

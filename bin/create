@@ -13,11 +13,15 @@ usage() {
 Usage: create user@host /path/to/public-key.pub [options]
 
 Options:
-  --user <name>   Remote account name (default: derived from key filename)
-  --help          Show this help
+  --user <name>                 Remote account name (default: derived from key filename)
+  --status-allowlist <file>    One allowed systemd unit per line for status requests
+  --log-allowlist <file>       One allowed systemd unit per line for log requests
+  --help                       Show this help
 
-The remote login must be privileged. The target must already trust the
-administrator's host key; this command uses StrictHostKeyChecking=yes.
+Both allowlist files are required. Blank lines and lines beginning with '#'
+are ignored; an empty file denies that operation. The remote login must be
+privileged. The target must already trust the administrator's host key; this
+command uses StrictHostKeyChecking=yes.
 EOF
   exit 2
 }
@@ -31,11 +35,23 @@ KEY_FILE="$2"
 shift 2
 
 READONLY_USER_OVERRIDE=""
+STATUS_ALLOWLIST_FILE=""
+LOG_ALLOWLIST_FILE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user)
       [[ $# -ge 2 ]] || usage
       READONLY_USER_OVERRIDE="$2"
+      shift 2
+      ;;
+    --status-allowlist)
+      [[ $# -ge 2 ]] || usage
+      STATUS_ALLOWLIST_FILE="$2"
+      shift 2
+      ;;
+    --log-allowlist)
+      [[ $# -ge 2 ]] || usage
+      LOG_ALLOWLIST_FILE="$2"
       shift 2
       ;;
     --help)
@@ -47,6 +63,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$STATUS_ALLOWLIST_FILE" || -z "$LOG_ALLOWLIST_FILE" ]]; then
+  echo "Error: both --status-allowlist and --log-allowlist are required" >&2
+  exit 1
+fi
 
 if [[ "$REMOTE" == -* || ! "$REMOTE" =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]]; then
   echo "Error: remote must be in user@host format: $REMOTE" >&2
@@ -101,6 +122,28 @@ if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root
   exit 1
 fi
 
+UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
+validate_allowlist() {
+  local file="$1" line
+  if [[ ! -f "$file" || ! -r "$file" || -L "$file" ]]; then
+    echo "Error: allowlist file is not a readable regular file: $file" >&2
+    exit 1
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" != *$'\r'* ]] || {
+      echo "Error: allowlist contains a carriage return: $file" >&2
+      exit 1
+    }
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^$UNIT_PATTERN$ ]] || {
+      echo "Error: invalid systemd unit in allowlist $file: $line" >&2
+      exit 1
+    }
+  done < "$file"
+}
+validate_allowlist "$STATUS_ALLOWLIST_FILE"
+validate_allowlist "$LOG_ALLOWLIST_FILE"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DISPATCHER_FILE="$SCRIPT_DIR/remote/homelab-agent-dispatch"
 ROOT_HELPER_FILE="$SCRIPT_DIR/remote/homelab-agent-dispatch-root"
@@ -109,12 +152,19 @@ for file in "$DISPATCHER_FILE" "$ROOT_HELPER_FILE"; do
 done
 
 encode_file() {
-  base64 < "$1" | tr -d '\n'
+  local encoded
+  encoded="$(base64 < "$1" | tr -d '\n')"
+  # SSH joins remote-command arguments with spaces; keep an empty allowlist
+  # argument non-empty while preserving its empty/ignored-line semantics.
+  [[ -n "$encoded" ]] || encoded='Cg=='
+  printf '%s' "$encoded"
 }
 
 PUBLIC_KEY_B64="$(printf '%s' "$PUBLIC_KEY" | base64 | tr -d '\n')"
 DISPATCHER_B64="$(encode_file "$DISPATCHER_FILE")"
 ROOT_HELPER_B64="$(encode_file "$ROOT_HELPER_FILE")"
+STATUS_ALLOWLIST_B64="$(encode_file "$STATUS_ALLOWLIST_FILE")"
+LOG_ALLOWLIST_B64="$(encode_file "$LOG_ALLOWLIST_FILE")"
 
 printf 'Provisioning forced-command access for %s on %s\n' "$READONLY_USER" "$REMOTE"
 printf 'Public key: %s\n' "$KEY_FILE"
@@ -125,14 +175,17 @@ ssh \
   -o StrictHostKeyChecking=yes \
   -o ConnectTimeout=10 \
   -- "$REMOTE" bash -s -- \
-  "$READONLY_USER" "$PUBLIC_KEY_B64" "$DISPATCHER_B64" "$ROOT_HELPER_B64" <<'REMOTE_SCRIPT'
+  "$READONLY_USER" "$PUBLIC_KEY_B64" "$DISPATCHER_B64" "$ROOT_HELPER_B64" \
+  "$STATUS_ALLOWLIST_B64" "$LOG_ALLOWLIST_B64" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
-[[ $# -eq 4 ]] || { echo "invalid provisioning payload" >&2; exit 64; }
+[[ $# -eq 6 ]] || { echo "invalid provisioning payload" >&2; exit 64; }
 READONLY_USER="$1"
 PUBLIC_KEY_B64="$2"
 DISPATCHER_B64="$3"
 ROOT_HELPER_B64="$4"
+STATUS_ALLOWLIST_B64="$5"
+LOG_ALLOWLIST_B64="$6"
 
 if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root ]]; then
   echo "invalid account name" >&2
@@ -153,21 +206,46 @@ done
 PUBLIC_KEY="$(printf '%s' "$PUBLIC_KEY_B64" | base64 -d)"
 DISPATCHER_TMP="$(mktemp)"
 ROOT_HELPER_TMP="$(mktemp)"
+STATUS_ALLOWLIST_TMP="$(mktemp)"
+LOG_ALLOWLIST_TMP="$(mktemp)"
 AUTH_TMP="$(mktemp)"
 SUDOERS_TMP="$(mktemp)"
 MARKER_TMP=""
 cleanup() {
-  rm -f "$DISPATCHER_TMP" "$ROOT_HELPER_TMP" "$AUTH_TMP" "$SUDOERS_TMP" "$MARKER_TMP"
+  rm -f "$DISPATCHER_TMP" "$ROOT_HELPER_TMP" "$STATUS_ALLOWLIST_TMP" \
+    "$LOG_ALLOWLIST_TMP" "$AUTH_TMP" "$SUDOERS_TMP" "$MARKER_TMP"
 }
 trap cleanup EXIT
 printf '%s' "$DISPATCHER_B64" | base64 -d > "$DISPATCHER_TMP"
 printf '%s' "$ROOT_HELPER_B64" | base64 -d > "$ROOT_HELPER_TMP"
+printf '%s' "$STATUS_ALLOWLIST_B64" | base64 -d > "$STATUS_ALLOWLIST_TMP"
+printf '%s' "$LOG_ALLOWLIST_B64" | base64 -d > "$LOG_ALLOWLIST_TMP"
+
+UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
+validate_allowlist() {
+  local file="$1" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" != *$'\r'* ]] || {
+      echo "invalid allowlist content" >&2
+      exit 65
+    }
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^$UNIT_PATTERN$ ]] || {
+      echo "invalid systemd unit in allowlist" >&2
+      exit 65
+    }
+  done < "$file"
+}
+validate_allowlist "$STATUS_ALLOWLIST_TMP"
+validate_allowlist "$LOG_ALLOWLIST_TMP"
 chmod 755 "$DISPATCHER_TMP" "$ROOT_HELPER_TMP"
 
 MANAGED_DIR="/etc/homelab-agent-access"
 MARKER="$MANAGED_DIR/$READONLY_USER"
 DISPATCHER_PATH="/usr/local/sbin/homelab-agent-dispatch"
 ROOT_HELPER_PATH="/usr/local/sbin/homelab-agent-dispatch-root"
+STATUS_ALLOWLIST_PATH="$MANAGED_DIR/status-allowlist"
+LOG_ALLOWLIST_PATH="$MANAGED_DIR/log-allowlist"
 SUDOERS_FILE="/etc/sudoers.d/homelab-agent-$READONLY_USER"
 MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
 MANAGED_END="# END homelab-agent-access managed key"
@@ -208,6 +286,8 @@ chmod 755 "$HOME_DIR"
 install -d -o root -g root -m 755 /usr/local/sbin
 install -o root -g root -m 755 "$DISPATCHER_TMP" "$DISPATCHER_PATH"
 install -o root -g root -m 755 "$ROOT_HELPER_TMP" "$ROOT_HELPER_PATH"
+install -o root -g root -m 444 "$STATUS_ALLOWLIST_TMP" "$STATUS_ALLOWLIST_PATH"
+install -o root -g root -m 444 "$LOG_ALLOWLIST_TMP" "$LOG_ALLOWLIST_PATH"
 
 SSH_DIR="$HOME_DIR/.ssh"
 AUTH_KEYS="$SSH_DIR/authorized_keys"
@@ -256,8 +336,8 @@ visudo -cf "$SUDOERS_TMP" >/dev/null
 install -o root -g root -m 440 "$SUDOERS_TMP" "$SUDOERS_FILE"
 
 printf '%s\n' "Provisioned $READONLY_USER with forced operations:"
-printf '%s\n' '  status UNIT'
-printf '%s\n' '  logs UNIT LINES (1-500)'
+printf '%s\n' '  status UNIT (status allowlist enforced)'
+printf '%s\n' '  logs UNIT LINES (1-500, log allowlist enforced)'
 printf '%s\n' '  ports'
 printf '%s\n' '  hardware'
 REMOTE_SCRIPT

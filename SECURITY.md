@@ -17,14 +17,17 @@ The intended use is a dedicated, revocable identity for an agent operating in a
 trusted homelab. The agent may be accidentally misled or its key may be
 compromised, so it must not share administrator credentials.
 
-The current account can request service state, service logs, listening sockets,
-and selected hardware information. Logs and host metadata may contain secrets.
-A compromised key can query all operations exposed by the helper.
+The current account can request allowlisted service state, allowlisted service
+logs, listening sockets, and selected hardware information. Logs and host
+metadata may contain secrets. A compromised key can query all operations exposed
+by the helper.
 
 ## Current security properties
 
 - Provisioning payloads are encoded before being passed through SSH arguments.
-- Usernames, public keys, unit names, and log limits are validated.
+- Usernames, public keys, allowlist unit names, request unit names, and log
+  limits are validated.
+- Root-owned per-host status and log allowlists are checked by the root helper.
 - Existing unmanaged accounts and authorized-key entries are not overwritten.
 - The agent key uses forwarding, X11, PTY, and user-rc restrictions.
 - The account password is locked and its home/SSH files are root-owned.
@@ -34,7 +37,8 @@ A compromised key can query all operations exposed by the helper.
 
 ## Remaining limitations
 
-- Service names and logs are not restricted to a per-host allowlist.
+- The administrator must maintain the allowlists; an allowlisted unit can still
+  expose sensitive state or logs.
 - `journalctl` output may contain credentials or other sensitive information.
 - Hardware output may reveal inventory and serial-adjacent information.
 - The implementation is Linux-oriented and assumes GNU user-management tools.
@@ -68,7 +72,7 @@ Before deployment or release:
   commands.
 - Inspect and validate every sudoers rule with `visudo`.
 - Confirm only the managed authorized key is present.
-- Confirm helper files and their parent directories are root-owned and not
-  writable by the agent.
+- Confirm helper files, allowlists, and their parent directories are root-owned
+  and not writable by the agent.
 - Confirm no host-specific data or credentials are in the repository.
 - Rotate or revoke the agent key after testing.

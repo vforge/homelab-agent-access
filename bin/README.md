@@ -9,18 +9,37 @@ host key before provisioning.
 
 ## Create or update
 
+Create one line-delimited allowlist file for each operation outside this
+repository. Blank lines and lines beginning with `#` are ignored; an empty file
+denies that operation.
+
+```text
+# status-units.txt
+example.service
+```
+
 ```bash
-./bin/create root@server ~/.ssh/agent.pub --user agent
+./bin/create root@server ~/.ssh/agent.pub --user agent \
+  --status-allowlist /path/to/status-units.txt \
+  --log-allowlist /path/to/log-units.txt
 ```
 
 Options:
 
 - `--user <name>` — remote account name. If omitted, it is derived from the
   public-key filename.
+- `--status-allowlist <file>` — allowed systemd units for `status` requests;
+  required and validated before transfer.
+- `--log-allowlist <file>` — allowed systemd units for `logs` requests;
+  required and validated before transfer.
 - `--help` — show usage.
 
 The command requires a privileged SSH login. It uses strict host-key checking
 and safely encodes provisioning payloads before sending them to the target.
+The allowlists are host-level and apply to every managed account on that host.
+Re-running it replaces the root-owned host allowlists, so review changes before
+updating an account. Existing managed accounts keep their currently installed
+helper until `create` is run again with both allowlist files.
 
 The target account is marked under `/etc/homelab-agent-access/` and is refused
 if an existing account is not managed by this tool. Re-running the command
@@ -35,8 +54,9 @@ rotates the managed key and updates the helper files.
 ```
 
 `--json` requires `jq` on the target. The audit reports managed accounts,
-account state, home directory, shell, managed-key presence, sudo-helper
-presence, and exposed operations.
+account state, home directory, shell, managed-key presence, sudo-helper and
+allowlist presence, and the exposed operation forms. It does not print the
+allowlist contents.
 
 ## Remove
 
@@ -46,13 +66,15 @@ presence, and exposed operations.
 ```
 
 Removal deletes the managed key block, the per-account sudoers rule, the
-account marker, and the account. `--keep-home` preserves the home directory.
-Unmanaged accounts are never removed.
+account marker, and the account. It does not delete the host-level allowlists;
+those remain for other managed accounts and must be reviewed separately.
+`--keep-home` preserves the home directory. Unmanaged accounts are never
+removed.
 
 ## Installed remote interface
 
 The authorized key invokes the root-owned dispatcher instead of an interactive
-shell. The only accepted requests are:
+shell. The only accepted request forms are:
 
 ```text
 status UNIT
@@ -61,8 +83,10 @@ ports
 hardware
 ```
 
-The root helper validates unit names and limits log requests to 500 lines. It
-uses fixed absolute command paths and does not interpret arbitrary shell input.
+The root helper validates unit names, checks the per-host status/log
+allowlists, and limits log requests to 500 lines. `ports` and `hardware` remain
+available independently. It uses fixed absolute command paths and does not
+interpret arbitrary shell input.
 
 The generated key disables port forwarding, X11 forwarding, agent forwarding,
 PTY allocation, and per-user SSH rc files. The generated sudoers rule permits
@@ -84,6 +108,8 @@ partial hardware output.
 
 Accounts created by older versions that lack the versioned management marker
 are intentionally refused. Remove or migrate them manually after review.
+Existing managed accounts are not updated automatically; rerun `create` with
+reviewed status and log allowlists after upgrading the helper.
 
 The forced command is a narrow interface, but it is not a complete OS sandbox.
 Logs may expose secrets, and a compromised agent key can query all operations
