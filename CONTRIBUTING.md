@@ -19,6 +19,7 @@ Run:
 
 ```bash
 make test
+make lint         # requires ShellCheck
 make integration  # only on an ephemeral Linux host with passwordless sudo
 ```
 

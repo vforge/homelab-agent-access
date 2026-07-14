@@ -22,6 +22,7 @@ Run before proposing changes:
 
 ```bash
 make test
+make lint
 bash -n bin/create
 bash -n bin/list
 bash -n bin/remove
@@ -29,7 +30,8 @@ bash -n remote/homelab-agent-dispatch remote/homelab-agent-dispatch-root
 ```
 
 `make test` runs local syntax and request-validation tests without contacting a
-host. `make integration` requires an ephemeral Linux host and passwordless sudo.
+host. `make lint` requires ShellCheck. `make integration` requires an ephemeral
+Linux host and passwordless sudo.
 Security-sensitive changes need disposable-host integration tests and an update
 to `SECURITY.md` and the changelog.
 

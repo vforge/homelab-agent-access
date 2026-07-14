@@ -161,7 +161,10 @@ for request in 'status allowed.service' 'logs allowed.service 1'; do
   allowed_rc=$?
   set -e
   [[ "$allowed_rc" -ne 77 ]]
-  ! grep -q 'not allowlisted' "$TMP_DIR/helper-output"
+  if grep -q 'not allowlisted' "$TMP_DIR/helper-output"; then
+    echo "allowlisted request was denied: $request" >&2
+    exit 1
+  fi
 done
 chmod 600 "$TMP_DIR/allowlists/status-allowlist"
 printf '%s\n' 'invalid unit' >> "$TMP_DIR/allowlists/status-allowlist"

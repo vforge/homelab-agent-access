@@ -137,6 +137,7 @@ threat-model impact.
 
 ```bash
 make test
+make lint         # requires ShellCheck
 make integration  # requires an ephemeral Linux host and passwordless sudo
 bash -n bin/create bin/list bin/remove
 bash -n remote/homelab-agent-dispatch remote/homelab-agent-dispatch-root

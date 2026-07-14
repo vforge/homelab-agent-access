@@ -9,6 +9,7 @@
 ## Validation
 
 - [ ] `make test`
+- [ ] `make lint`
 - [ ] Documentation updated
 - [ ] No real host data, credentials, keys, private paths, or sensitive logs included
 - [ ] Disposable-host validation completed, or not applicable
