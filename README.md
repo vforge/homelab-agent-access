@@ -1,7 +1,9 @@
 # Homelab Agent Access
 
-Small SSH tooling for giving an agent narrowly scoped access to homelab
-machines for service, log, network, and hardware inspection.
+A minimal least-authority diagnostic gateway for giving an automation agent
+narrowly scoped access to homelab service, log, network, and hardware
+information. It reuses SSH for authenticated transport; the managed key has no
+intended interactive shell path.
 
 [![CI](https://github.com/vforge/homelab-agent-access/actions/workflows/ci.yml/badge.svg)](https://github.com/vforge/homelab-agent-access/actions/workflows/ci.yml)
 
@@ -18,6 +20,20 @@ practices. It is not a supported product or security certification; you are
 responsible for deployment and any resulting damage.
 
 See [DISCLAIMER.md](DISCLAIMER.md) for the short version.
+
+## Architecture
+
+The project deliberately uses a dedicated SSH identity, forced command, exact
+sudo rule, and a few root-owned policy/helper files instead of installing a
+resident daemon, telemetry stack, access broker, or automation controller. SSH
+is the transport; the managed-key restrictions, forced command, root-owned
+policy, exact sudo rule, and privileged helper validation jointly form the
+capability boundary.
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the user jobs, goals, trust model,
+data flows, security invariants, alternatives considered, decision rationale,
+evolution priorities, and conditions that should trigger a move to a
+telemetry-backed API.
 
 ## How it works
 
@@ -124,6 +140,7 @@ or shell interpretation to the protocol without a separate security review.
 ├── skills/                 # Agent-facing usage skill
 ├── tests/                  # Local validation helpers
 ├── AGENTS.md               # Instructions for automated contributors
+├── ARCHITECTURE.md         # Design decision, boundaries, and alternatives
 ├── CONTRIBUTING.md         # Contribution and validation workflow
 ├── SECURITY.md             # Threat model, limitations, and reporting
 └── Makefile                # Local test entry point

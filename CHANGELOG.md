@@ -4,6 +4,9 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- Document the accepted minimal SSH capability-gateway architecture, its trust
+  boundaries, alternatives, invariants, evolution priorities, and
+  reconsideration triggers.
 - Add disposable-host integration tests.
 - Add per-host service and log allowlists.
 - Bind managed accounts to recorded UID and canonical home metadata.

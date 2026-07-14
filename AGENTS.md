@@ -1,7 +1,8 @@
 # Agent instructions
 
 This is a public repository containing security-sensitive remote provisioning
-scripts. Read `README.md` and `SECURITY.md` before changing implementation.
+scripts. Read `README.md`, `ARCHITECTURE.md`, and `SECURITY.md` before changing
+implementation.
 
 ## Safety rules
 

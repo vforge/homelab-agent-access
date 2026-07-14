@@ -7,9 +7,14 @@ machines. It is personal homelab tooling, provided as-is, and is not a
 complete security boundary for hostile or prompt-injectable agents.
 
 The current design uses an SSH forced-command dispatcher and a root-owned helper
-with a small validated request protocol. It is safer than the previous
-interactive `rbash` design, but it is still not a VM, container, MAC policy, or
-complete sandbox.
+with a small validated request protocol. It deliberately reuses the target's
+existing sshd rather than installing a resident API daemon or observability
+control plane. It is safer than the previous interactive `rbash` design, but it
+is still not a VM, container, MAC policy, or complete sandbox.
+
+[`ARCHITECTURE.md`](ARCHITECTURE.md) records the accepted design direction,
+trust boundaries, required invariants, alternatives considered, and conditions
+under which a centralized telemetry gateway should replace this model.
 
 ## Threat model
 
@@ -56,6 +61,19 @@ by the helper.
   the helper commands.
 - The account should have only the managed authorized key. Additional access
   paths or host-level SSH configuration can weaken the design.
+- Status and log allowlists are currently host-wide, not per identity; multiple
+  managed agents on one host therefore share those policy scopes.
+- Installed helper ownership and mode are audited, but those checks do not yet
+  attest that helper content matches the expected templates. Provisioning
+  treats the documented fixed helper and policy paths as project-managed and
+  can replace existing regular files there after path-safety checks.
+- If an account is already absent, stale-state removal validates the marker's
+  type, owner, and mode but does not verify the contents of that marker or the
+  same-named sudoers file before deleting both. It does not remove a home in
+  this path.
+- The system has no built-in request audit trail or server-side output
+  redaction; agent-side minimization is not a technical confidentiality
+  boundary.
 
 Do not add service mutation, arbitrary file reads, arbitrary command arguments,
 or shell interpretation to the protocol without a separate security review.
