@@ -19,11 +19,12 @@ Run:
 
 ```bash
 make test
+make integration  # only on an ephemeral Linux host with passwordless sudo
 ```
 
-Do not test against real machines. Use a disposable VM or container for
-integration tests and provide setup instructions that do not require committed
-credentials.
+Do not test against real machines. `tests/integration.sh` refuses existing
+managed state but still creates accounts and global files; run it only on a
+disposable VM, container, or CI runner. Never provide committed credentials.
 
 ## Pull requests
 

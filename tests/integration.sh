@@ -220,13 +220,24 @@ fi
 
 # Verify the managed key and audit output rather than accepting file existence.
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \
-  "grep -q 'no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc' /home/$TEST_USER/.ssh/authorized_keys"
+  "grep -q 'restrict,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc' /home/$TEST_USER/.ssh/authorized_keys"
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \
   "grep -q '^version=3$' /etc/homelab-agent-access/accounts/$TEST_USER"
 "$ROOT_DIR/bin/list" root@admin-target --json | \
   jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
-    .state == "present" and .authorized_key == "present" and
-    .status_allowlist == "present" and .log_allowlist == "present")' >/dev/null
+    .state == "present" and .metadata == "valid" and
+    .home_security == "secure" and .password == "locked" and
+    .authorized_key == "valid" and .sudoers == "valid" and
+    .status_allowlist == "valid" and .log_allowlist == "valid" and
+    .dispatcher == "secure" and .root_helper == "secure")' >/dev/null
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  chmod 444 /etc/homelab-agent-access/status-allowlist
+"$ROOT_DIR/bin/list" root@admin-target --json | \
+  jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
+    .status_allowlist == "unsafe")' >/dev/null
+expect_agent_rc 69 'status ssh.service'
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  chmod 400 /etc/homelab-agent-access/status-allowlist
 
 # A preflight failure must not replace shared allowlists or other artifacts.
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \

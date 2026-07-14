@@ -10,9 +10,12 @@ Options:
   --brief   Emit one line per managed account
   --help    Show this help
 EOF
-  exit 2
+  exit "${1:-2}"
 }
 
+if [[ $# -eq 1 && "$1" == --help ]]; then
+  usage 0
+fi
 [[ $# -ge 1 ]] || usage
 REMOTE="$1"
 shift
@@ -21,7 +24,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --json) FORMAT=json; shift ;;
     --brief) FORMAT=brief; shift ;;
-    --help) usage ;;
+    --help) usage 0 ;;
     *) echo "Unknown option: $1" >&2; usage ;;
   esac
 done
@@ -46,7 +49,7 @@ FORMAT="$1"
   exit 64
 }
 
-for required in getent id grep; do
+for required in getent id stat; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -64,17 +67,112 @@ ACCOUNTS_DIR="$MANAGED_DIR/accounts"
 SUDOERS_DIR="/etc/sudoers.d"
 STATUS_ALLOWLIST="$MANAGED_DIR/status-allowlist"
 LOG_ALLOWLIST="$MANAGED_DIR/log-allowlist"
-status_allowlist_state=missing
-log_allowlist_state=missing
-[[ -f "$STATUS_ALLOWLIST" && ! -L "$STATUS_ALLOWLIST" ]] && status_allowlist_state=present
-[[ -f "$LOG_ALLOWLIST" && ! -L "$LOG_ALLOWLIST" ]] && log_allowlist_state=present
+DISPATCHER_PATH="/usr/local/sbin/homelab-agent-dispatch"
+ROOT_HELPER_PATH="/usr/local/sbin/homelab-agent-dispatch-root"
+UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
+KEY_OPTIONS='restrict,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc,command="/usr/local/sbin/homelab-agent-dispatch"'
+MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
+MANAGED_END="# END homelab-agent-access managed key"
+
+secure_file_state() {
+  local file="$1" mode="$2"
+  if [[ ! -e "$file" && ! -L "$file" ]]; then
+    printf '%s\n' missing
+  elif [[ ! -f "$file" || -L "$file" || "$(stat -c '%u' "$file")" -ne 0 || \
+          "$(stat -c '%a' "$file")" != "$mode" ]]; then
+    printf '%s\n' unsafe
+  else
+    printf '%s\n' valid
+  fi
+}
+
+allowlist_state() {
+  local file="$1" state line entries=0 bytes
+  state="$(secure_file_state "$file" 400)"
+  [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
+  bytes="$(stat -c '%s' "$file")"
+  [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -le 65536 ]] || { printf '%s\n' invalid; return; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" != *$'\r'* ]] || { printf '%s\n' invalid; return; }
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    entries=$((entries + 1))
+    (( entries <= 1024 )) || { printf '%s\n' invalid; return; }
+    [[ "$line" =~ ^$UNIT_PATTERN$ ]] || { printf '%s\n' invalid; return; }
+  done < "$file"
+  printf '%s\n' valid
+}
+
+managed_key_state() {
+  local home="$1" ssh_dir auth state line in_managed=false blocks=0 keys=0
+  local payload key_type key_data _
+  [[ "$home" == /home/* ]] || { printf '%s\n' missing; return; }
+  ssh_dir="$home/.ssh"
+  auth="$ssh_dir/authorized_keys"
+  state="$(secure_file_state "$auth" 400)"
+  [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
+  if [[ ! -d "$ssh_dir" || -L "$ssh_dir" || "$(stat -c '%u' "$ssh_dir")" -ne 0 || \
+        "$(stat -c '%a' "$ssh_dir")" != 700 ]]; then
+    printf '%s\n' unsafe
+    return
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$MANAGED_BEGIN" ]]; then
+      [[ "$in_managed" == false ]] || { printf '%s\n' invalid; return; }
+      in_managed=true
+      blocks=$((blocks + 1))
+      continue
+    fi
+    if [[ "$line" == "$MANAGED_END" ]]; then
+      [[ "$in_managed" == true ]] || { printf '%s\n' invalid; return; }
+      in_managed=false
+      continue
+    fi
+    if [[ "$in_managed" == true ]]; then
+      keys=$((keys + 1))
+      [[ "$line" == "$KEY_OPTIONS "* ]] || { printf '%s\n' invalid; return; }
+      payload="${line#"$KEY_OPTIONS "}"
+      read -r key_type key_data _ <<< "$payload"
+      [[ "$key_type" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)$ ]] || {
+        printf '%s\n' invalid; return;
+      }
+      [[ "$key_data" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || { printf '%s\n' invalid; return; }
+    elif [[ -n "$line" && "$line" != \#* ]]; then
+      printf '%s\n' invalid
+      return
+    fi
+  done < "$auth"
+  [[ "$in_managed" == false && "$blocks" -eq 1 && "$keys" -eq 1 ]] || {
+    printf '%s\n' invalid; return;
+  }
+  printf '%s\n' valid
+}
+
+sudoers_state() {
+  local user="$1" file state expected
+  file="$SUDOERS_DIR/homelab-agent-$user"
+  state="$(secure_file_state "$file" 440)"
+  [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
+  expected="$(printf '%s\n%s ALL=(root) NOPASSWD: %s \"\"' \
+    '# Managed by homelab-agent-access. Do not edit manually.' "$user" "$ROOT_HELPER_PATH")"
+  [[ "$(<"$file")" == "$expected" ]] && printf '%s\n' valid || printf '%s\n' invalid
+}
+
+helper_state() {
+  local state
+  state="$(secure_file_state "$1" 755)"
+  [[ "$state" == valid ]] && printf '%s\n' secure || printf '%s\n' "$state"
+}
+
+status_allowlist_state="$(allowlist_state "$STATUS_ALLOWLIST")"
+log_allowlist_state="$(allowlist_state "$LOG_ALLOWLIST")"
+dispatcher_state="$(helper_state "$DISPATCHER_PATH")"
+root_helper_state="$(helper_state "$ROOT_HELPER_PATH")"
 users=()
 if [[ -d "$ACCOUNTS_DIR" && ! -L "$ACCOUNTS_DIR" ]]; then
   for marker in "$ACCOUNTS_DIR"/*; do
-    [[ -f "$marker" && ! -L "$marker" ]] || continue
+    [[ -e "$marker" || -L "$marker" ]] || continue
     user="${marker##*/}"
     [[ "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$user" != root ]] || continue
-    grep -q '^version=3$' "$marker" || continue
     users+=("$user")
   done
 fi
@@ -82,10 +180,16 @@ fi
 # require an explicit create/update migration.
 if [[ -d "$MANAGED_DIR" && ! -L "$MANAGED_DIR" ]]; then
   for marker in "$MANAGED_DIR"/*; do
-    [[ -f "$marker" && ! -L "$marker" ]] || continue
+    [[ -e "$marker" || -L "$marker" ]] || continue
     user="${marker##*/}"
     [[ "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$user" != root ]] || continue
-    [[ "$(<"$marker")" == version=2 ]] || continue
+    [[ "$user" != status-allowlist && "$user" != log-allowlist ]] || continue
+    [[ ! -e "$ACCOUNTS_DIR/$user" && ! -L "$ACCOUNTS_DIR/$user" ]] || continue
+    if [[ -L "$marker" ]]; then
+      users+=("$user")
+      continue
+    fi
+    [[ -f "$marker" && "$(<"$marker")" == version=2 ]] || continue
     users+=("$user")
   done
 fi
@@ -114,10 +218,55 @@ shell_for_user() {
 
 version_for_user() {
   local user="$1"
-  if [[ -f "$ACCOUNTS_DIR/$user" && ! -L "$ACCOUNTS_DIR/$user" ]]; then
+  if [[ -e "$ACCOUNTS_DIR/$user" || -L "$ACCOUNTS_DIR/$user" ]]; then
     printf '%s\n' 3
   else
     printf '%s\n' 2
+  fi
+}
+
+home_state_for_user() {
+  local user="$1" home="$2"
+  if [[ "$home" != "/home/$user" || ! -d "$home" || -L "$home" ]]; then
+    printf '%s\n' unsafe
+  elif [[ "$(stat -c '%u' "$home")" -ne 0 || "$(stat -c '%a' "$home")" != 755 ]]; then
+    printf '%s\n' unsafe
+  else
+    printf '%s\n' secure
+  fi
+}
+
+password_state_for_user() {
+  local user="$1" entry password _
+  entry="$(getent shadow "$user" 2>/dev/null || true)"
+  [[ -n "$entry" ]] || { printf '%s\n' unknown; return; }
+  IFS=: read -r _ password _ <<< "$entry"
+  if [[ "$password" == '!'* || "$password" == '*'* ]]; then
+    printf '%s\n' locked
+  else
+    printf '%s\n' unlocked
+  fi
+}
+
+metadata_state_for_user() {
+  local user="$1" version marker entry uid home expected state
+  version="$(version_for_user "$user")"
+  if [[ "$version" -eq 2 ]]; then
+    printf '%s\n' legacy
+    return
+  fi
+  marker="$ACCOUNTS_DIR/$user"
+  state="$(secure_file_state "$marker" 400)"
+  [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
+  entry="$(getent passwd "$user" 2>/dev/null || true)"
+  [[ -n "$entry" ]] || { printf '%s\n' stale; return; }
+  IFS=: read -r _ _ uid _ _ home _ <<< "$entry"
+  expected="$(printf 'version=3\nuser=%s\nuid=%s\nhome=%s' "$user" "$uid" "$home")"
+  if [[ "$uid" =~ ^[0-9]+$ && "$uid" -ne 0 && "$home" == "/home/$user" && \
+        "$(<"$marker")" == "$expected" ]]; then
+    printf '%s\n' valid
+  else
+    printf '%s\n' invalid
   fi
 }
 
@@ -127,25 +276,33 @@ if [[ "$FORMAT" == json ]]; then
     home="$(home_for_user "$user")"
     shell="$(shell_for_user "$user")"
     metadata_version="$(version_for_user "$user")"
+    metadata_state="$(metadata_state_for_user "$user")"
+    home_state="$(home_state_for_user "$user" "$home")"
+    password_state="$(password_state_for_user "$user")"
     state=present
     id "$user" >/dev/null 2>&1 || state=stale
-    key_state=missing
-    [[ -f "$home/.ssh/authorized_keys" ]] && key_state=present
-    sudo_state=missing
-    [[ -f "$SUDOERS_DIR/homelab-agent-$user" ]] && sudo_state=present
+    key_state="$(managed_key_state "$home")"
+    sudo_state="$(sudoers_state "$user")"
     result="$(jq --arg user "$user" \
       --arg home "$home" \
       --arg shell "$shell" \
       --arg state "$state" \
       --arg key_state "$key_state" \
       --arg sudo_state "$sudo_state" \
+      --arg metadata_state "$metadata_state" \
+      --arg home_state "$home_state" \
+      --arg password_state "$password_state" \
       --arg status_allowlist "$status_allowlist_state" \
       --arg log_allowlist "$log_allowlist_state" \
+      --arg dispatcher "$dispatcher_state" \
+      --arg root_helper "$root_helper_state" \
       --argjson metadata_version "$metadata_version" \
       '. + [{user: $user, home: $home, shell: $shell, state: $state,
-        metadata_version: $metadata_version,
+        metadata_version: $metadata_version, metadata: $metadata_state,
+        home_security: $home_state, password: $password_state,
         authorized_key: $key_state, sudoers: $sudo_state,
         status_allowlist: $status_allowlist, log_allowlist: $log_allowlist,
+        dispatcher: $dispatcher, root_helper: $root_helper,
         operations: ["status", "logs", "ports", "hardware"]}]' <<< "$result")"
   done
   jq . <<< "$result"
@@ -158,7 +315,12 @@ if [[ "$FORMAT" == brief ]]; then
     state=present
     id "$user" >/dev/null 2>&1 || state=stale
     metadata_version="$(version_for_user "$user")"
-    echo "$user home=$home state=$state metadata_version=$metadata_version"
+    metadata_state="$(metadata_state_for_user "$user")"
+    home_state="$(home_state_for_user "$user" "$home")"
+    password_state="$(password_state_for_user "$user")"
+    key_state="$(managed_key_state "$home")"
+    sudo_state="$(sudoers_state "$user")"
+    echo "$user home=$home state=$state metadata_version=$metadata_version metadata=$metadata_state home_security=$home_state password=$password_state key=$key_state sudoers=$sudo_state"
   done
   [[ ${#users[@]} -gt 0 ]] || echo "No managed accounts found."
   exit 0
@@ -173,19 +335,24 @@ for user in "${users[@]}"; do
   home="$(home_for_user "$user")"
   shell="$(shell_for_user "$user")"
   metadata_version="$(version_for_user "$user")"
+  metadata_state="$(metadata_state_for_user "$user")"
+  home_state="$(home_state_for_user "$user" "$home")"
+  password_state="$(password_state_for_user "$user")"
   state=present
   id "$user" >/dev/null 2>&1 || state=stale
-  key_state=missing
-  [[ -f "$home/.ssh/authorized_keys" ]] && key_state=present
-  sudo_state=missing
-  [[ -f "$SUDOERS_DIR/homelab-agent-$user" ]] && sudo_state=present
+  key_state="$(managed_key_state "$home")"
+  sudo_state="$(sudoers_state "$user")"
   printf '%s\n' "-- $user --"
   printf '  Home:          %s\n' "$home"
   printf '  Shell:         %s\n' "$shell"
   printf '  State:         %s\n' "$state"
-  printf '  Metadata:      version %s\n' "$metadata_version"
+  printf '  Metadata:      version %s (%s)\n' "$metadata_version" "$metadata_state"
+  printf '  Home security: %s\n' "$home_state"
+  printf '  Password:      %s\n' "$password_state"
   printf '  Managed key:   %s\n' "$key_state"
   printf '  Sudo helper:   %s\n' "$sudo_state"
+  printf '  Dispatcher:    %s\n' "$dispatcher_state"
+  printf '  Root helper:   %s\n' "$root_helper_state"
   printf '  Status list:   %s\n' "$status_allowlist_state"
   printf '  Log list:      %s\n' "$log_allowlist_state"
   printf '  Operations:    status, logs, ports, hardware (unit allowlists apply)\n\n'

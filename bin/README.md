@@ -11,7 +11,7 @@ host key before provisioning.
 
 Create one line-delimited allowlist file for each operation outside this
 repository. Blank lines and lines beginning with `#` are ignored; an empty file
-denies that operation.
+denies that operation. Each file is limited to 65,536 bytes and 1,024 units.
 
 ```text
 # status-units.txt
@@ -56,10 +56,13 @@ Re-running the command rotates the managed key and updates the helper files.
 ./bin/list root@server --json
 ```
 
-`--json` requires `jq` on the target. The audit reports managed accounts,
-account state, home directory, shell, managed-key presence, sudo-helper and
-allowlist presence, and the exposed operation forms. It does not print the
-allowlist contents.
+`--json` requires `jq` on the target. The audit validates account metadata,
+home ownership/mode, password locking, the managed authorized-key block, exact
+sudoers content, allowlist syntax, and expected root ownership/modes. States
+are `valid`, `missing`, `invalid`, `unsafe`, `legacy`, or `stale` as applicable.
+Dispatcher fields report `secure`
+when ownership and mode are correct; they do not attest template content. The
+audit does not print allowlist contents.
 
 ## Remove
 
@@ -91,14 +94,17 @@ allowlists, and limits log requests to 500 lines. `ports` and `hardware` remain
 available independently. It uses fixed absolute command paths and does not
 interpret arbitrary shell input.
 
-The generated key disables port forwarding, X11 forwarding, agent forwarding,
-PTY allocation, and per-user SSH rc files. The generated sudoers rule permits
-only the root helper with no command-line arguments.
+The generated key uses OpenSSH's `restrict` option plus explicit restrictions
+for port forwarding, X11 forwarding, agent forwarding, PTY allocation, and
+per-user SSH rc files. The generated sudoers rule permits only the root helper
+with no command-line arguments. Managed metadata, keys, and allowlists are
+root-only readable.
 
 ## Target requirements
 
 The target must provide:
 
+- OpenSSH 7.2 or newer for the authorized-key `restrict` option.
 - Bash, `useradd`, `usermod`, `getent`, `install`, and `base64`.
 - `sudo` at `/usr/bin/sudo` and `visudo`.
 - A privileged SSH login for provisioning.

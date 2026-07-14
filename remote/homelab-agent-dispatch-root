@@ -17,9 +17,27 @@ usage() {
 }
 
 allowlist_contains() {
-  local file="$1" requested="$2" line
+  local file="$1" requested="$2" line stat_command found=false entries=0 bytes
   if [[ ! -f "$file" || -L "$file" || ! -r "$file" ]]; then
     echo "allowlist is missing or inaccessible: $file" >&2
+    return 69
+  fi
+  if [[ -x /usr/bin/stat ]]; then
+    stat_command=/usr/bin/stat
+  elif [[ -x /bin/stat ]]; then
+    stat_command=/bin/stat
+  else
+    echo "stat is unavailable for allowlist verification" >&2
+    return 69
+  fi
+  if [[ "$("$stat_command" -c '%u' "$file")" -ne 0 || \
+        "$("$stat_command" -c '%a' "$file")" != 400 ]]; then
+    echo "allowlist ownership or permissions are unsafe: $file" >&2
+    return 69
+  fi
+  bytes="$("$stat_command" -c '%s' "$file")"
+  if [[ ! "$bytes" =~ ^[0-9]+$ || "$bytes" -gt 65536 ]]; then
+    echo "allowlist exceeds the size limit: $file" >&2
     return 69
   fi
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -28,12 +46,18 @@ allowlist_contains() {
       return 69
     }
     [[ -z "$line" || "$line" == \#* ]] && continue
+    entries=$((entries + 1))
+    (( entries <= 1024 )) || {
+      echo "allowlist exceeds the unit limit: $file" >&2
+      return 69
+    }
     [[ "$line" =~ ^$UNIT_PATTERN$ ]] || {
       echo "allowlist contains an invalid systemd unit: $file" >&2
       return 69
     }
-    [[ "$line" == "$requested" ]] && return 0
+    [[ "$line" == "$requested" ]] && found=true
   done < "$file"
+  [[ "$found" == true ]] && return 0
   return 1
 }
 

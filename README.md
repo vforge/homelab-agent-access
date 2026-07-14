@@ -47,7 +47,7 @@ There is no intended interactive shell or arbitrary command interface.
 
 ### Requirements
 
-- Bash and OpenSSH on the administering machine.
+- Bash and OpenSSH 7.2 or newer on the administering machine and target.
 - A privileged SSH login to the target. The provisioning script performs root
   operations directly and does not automatically invoke `sudo`.
 - A Linux target with `bash`, `useradd`, `usermod`, `getent`, `install`, `base64`,
@@ -74,8 +74,9 @@ line, then provision, audit, and remove an account:
 ```
 
 Blank and `#` comment lines are ignored. An empty allowlist denies its
-operation. `status` and `logs` requests for units absent from their respective
-allowlist are rejected; `ports` and `hardware` are unaffected.
+operation; each file is limited to 65,536 bytes and 1,024 units. `status` and
+`logs` requests for units absent from their respective allowlist are rejected;
+`ports` and `hardware` are unaffected.
 
 The scripts refuse to modify unmanaged existing accounts and preserve only
 comments plus the managed key block in `authorized_keys`. See

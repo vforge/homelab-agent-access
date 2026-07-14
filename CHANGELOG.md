@@ -8,6 +8,7 @@ All notable changes to this project are documented here.
 - Add per-host service and log allowlists.
 - Bind managed accounts to recorded UID and canonical home metadata.
 - Preflight provisioning and roll back failed managed-file installations.
+- Strengthen managed-state auditing, file permissions, and SSH key restrictions.
 
 ## [0.2.0] - 2026-07-12
 

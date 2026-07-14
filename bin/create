@@ -23,9 +23,12 @@ are ignored; an empty file denies that operation. The remote login must be
 privileged. The target must already trust the administrator's host key; this
 command uses StrictHostKeyChecking=yes.
 EOF
-  exit 2
+  exit "${1:-2}"
 }
 
+if [[ $# -eq 1 && "$1" == --help ]]; then
+  usage 0
+fi
 if [[ $# -lt 2 ]]; then
   usage
 fi
@@ -55,7 +58,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --help)
-      usage
+      usage 0
       ;;
     *)
       echo "Unknown option: $1" >&2
@@ -124,9 +127,14 @@ fi
 
 UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
 validate_allowlist() {
-  local file="$1" line
+  local file="$1" line bytes entries=0
   if [[ ! -f "$file" || ! -r "$file" || -L "$file" ]]; then
     echo "Error: allowlist file is not a readable regular file: $file" >&2
+    exit 1
+  fi
+  bytes="$(wc -c < "$file" | tr -d '[:space:]')"
+  if [[ ! "$bytes" =~ ^[0-9]+$ || "$bytes" -gt 65536 ]]; then
+    echo "Error: allowlist exceeds the 65536-byte limit: $file" >&2
     exit 1
   fi
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -135,6 +143,11 @@ validate_allowlist() {
       exit 1
     }
     [[ -z "$line" || "$line" == \#* ]] && continue
+    entries=$((entries + 1))
+    (( entries <= 1024 )) || {
+      echo "Error: allowlist exceeds the 1024-unit limit: $file" >&2
+      exit 1
+    }
     [[ "$line" =~ ^$UNIT_PATTERN$ ]] || {
       echo "Error: invalid systemd unit in allowlist $file: $line" >&2
       exit 1
@@ -192,7 +205,7 @@ if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root
   exit 64
 fi
 
-for required in id getent useradd usermod userdel install mktemp base64 sudo visudo stat cmp cp mv rm rmdir chown chmod; do
+for required in id getent useradd usermod userdel install mktemp base64 sudo visudo stat cmp cp mv rm rmdir chown chmod wc tr; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -264,13 +277,23 @@ printf '%s' "$LOG_ALLOWLIST_B64" | base64 -d > "$LOG_ALLOWLIST_TMP"
 
 UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
 validate_allowlist() {
-  local file="$1" line
+  local file="$1" line bytes entries=0
+  bytes="$(wc -c < "$file" | tr -d '[:space:]')"
+  if [[ ! "$bytes" =~ ^[0-9]+$ || "$bytes" -gt 65536 ]]; then
+    echo "allowlist exceeds the 65536-byte limit" >&2
+    exit 65
+  fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" != *$'\r'* ]] || {
       echo "invalid allowlist content" >&2
       exit 65
     }
     [[ -z "$line" || "$line" == \#* ]] && continue
+    entries=$((entries + 1))
+    (( entries <= 1024 )) || {
+      echo "allowlist exceeds the 1024-unit limit" >&2
+      exit 65
+    }
     [[ "$line" =~ ^$UNIT_PATTERN$ ]] || {
       echo "invalid systemd unit in allowlist" >&2
       exit 65
@@ -293,7 +316,7 @@ LOG_ALLOWLIST_PATH="$MANAGED_DIR/log-allowlist"
 SUDOERS_FILE="/etc/sudoers.d/homelab-agent-$READONLY_USER"
 MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
 MANAGED_END="# END homelab-agent-access managed key"
-KEY_OPTIONS='no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc,command="/usr/local/sbin/homelab-agent-dispatch"'
+KEY_OPTIONS='restrict,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc,command="/usr/local/sbin/homelab-agent-dispatch"'
 MIGRATE_LEGACY=false
 
 if id "$READONLY_USER" >/dev/null 2>&1; then

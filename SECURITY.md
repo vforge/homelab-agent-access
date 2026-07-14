@@ -33,8 +33,10 @@ by the helper.
 - Existing unmanaged accounts and authorized-key entries are not overwritten.
 - Managed-account metadata binds the username to a nonzero UID and canonical
   `/home/USER` path before update or removal.
-- The agent key uses forwarding, X11, PTY, and user-rc restrictions.
+- The agent key uses OpenSSH `restrict` plus explicit forwarding, X11, PTY,
+  agent-forwarding, and user-rc restrictions.
 - The account password is locked and its home/SSH files are root-owned.
+- Managed metadata, authorized keys, and allowlists are root-only readable.
 - The only sudo permission is an exact no-argument root helper.
 - The root helper uses fixed absolute command paths and does not evaluate shell
   input.
@@ -75,6 +77,7 @@ Before deployment or release:
 - Confirm the dedicated key cannot forward, open a PTY, or run arbitrary shell
   commands.
 - Inspect and validate every sudoers rule with `visudo`.
+- Confirm `bin/list` reports valid metadata, key, sudoers, and allowlist states.
 - Confirm only the managed authorized key is present.
 - Confirm helper files, allowlists, and their parent directories are root-owned
   and not writable by the agent.

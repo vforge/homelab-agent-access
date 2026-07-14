@@ -17,6 +17,10 @@ printf '%s\n' "$@" > "${FAKE_SSH_CAPTURE:?}"
 FAKE_SSH
 chmod +x "$TMP_DIR/bin/ssh"
 
+"$ROOT_DIR/bin/create" --help >/dev/null 2>&1
+"$ROOT_DIR/bin/list" --help >/dev/null 2>&1
+"$ROOT_DIR/bin/remove" --help >/dev/null 2>&1
+
 FAKE_SSH_CAPTURE="$TMP_DIR/ssh.args" \
 PATH="$TMP_DIR/bin:$PATH" \
   "$ROOT_DIR/bin/create" root@server "$TMP_DIR/test-key.pub" --user agent \
@@ -83,13 +87,37 @@ if PATH="$TMP_DIR/bin:$PATH" "$ROOT_DIR/bin/create" root@server \
   echo 'invalid allowlist unit was accepted' >&2
   exit 1
 fi
+: > "$TMP_DIR/too-many-units"
+for ((index=0; index<1025; index++)); do
+  printf 'unit%s.service\n' "$index" >> "$TMP_DIR/too-many-units"
+done
+if PATH="$TMP_DIR/bin:$PATH" "$ROOT_DIR/bin/create" root@server \
+  "$TMP_DIR/test-key.pub" --user agent \
+  --status-allowlist "$TMP_DIR/too-many-units" \
+  --log-allowlist "$TMP_DIR/log-allowlist" >/dev/null 2>&1; then
+  echo 'oversized allowlist was accepted' >&2
+  exit 1
+fi
 
 # Exercise request validation and allowlist decisions without touching the
 # host's /etc. Only the test copy's configuration path is redirected.
 mkdir -p "$TMP_DIR/allowlists"
 printf '%s\n' 'allowed.service' > "$TMP_DIR/allowlists/status-allowlist"
 printf '%s\n' 'allowed.service' > "$TMP_DIR/allowlists/log-allowlist"
-sed "s#/etc/homelab-agent-access#$TMP_DIR/allowlists#g" \
+chmod 400 "$TMP_DIR/allowlists/status-allowlist" "$TMP_DIR/allowlists/log-allowlist"
+cat > "$TMP_DIR/stat-helper" <<'STAT_HELPER'
+#!/usr/bin/env bash
+case "$2" in
+  %u) printf '%s\n' 0 ;;
+  %a) printf '%s\n' 400 ;;
+  %s) printf '%s\n' 16 ;;
+  *) exit 2 ;;
+esac
+STAT_HELPER
+chmod 755 "$TMP_DIR/stat-helper"
+sed -e "s#/etc/homelab-agent-access#$TMP_DIR/allowlists#g" \
+  -e "s#/usr/bin/stat#$TMP_DIR/stat-helper#g" \
+  -e "s#/bin/stat#$TMP_DIR/stat-helper#g" \
   "$ROOT_DIR/remote/homelab-agent-dispatch-root" > "$TMP_DIR/helper-test"
 chmod 755 "$TMP_DIR/helper-test"
 
@@ -135,5 +163,9 @@ for request in 'status allowed.service' 'logs allowed.service 1'; do
   [[ "$allowed_rc" -ne 77 ]]
   ! grep -q 'not allowlisted' "$TMP_DIR/helper-output"
 done
+chmod 600 "$TMP_DIR/allowlists/status-allowlist"
+printf '%s\n' 'invalid unit' >> "$TMP_DIR/allowlists/status-allowlist"
+chmod 400 "$TMP_DIR/allowlists/status-allowlist"
+expect_helper_rc 69 'status allowed.service'
 
 printf '%s\n' 'CLI and request-validation tests passed.'
