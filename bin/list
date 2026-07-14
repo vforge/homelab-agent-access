@@ -154,13 +154,21 @@ sudoers_state() {
   [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
   expected="$(printf '%s\n%s ALL=(root) NOPASSWD: %s \"\"' \
     '# Managed by homelab-agent-access. Do not edit manually.' "$user" "$ROOT_HELPER_PATH")"
-  [[ "$(<"$file")" == "$expected" ]] && printf '%s\n' valid || printf '%s\n' invalid
+  if [[ "$(<"$file")" == "$expected" ]]; then
+    printf '%s\n' valid
+  else
+    printf '%s\n' invalid
+  fi
 }
 
 helper_state() {
   local state
   state="$(secure_file_state "$1" 755)"
-  [[ "$state" == valid ]] && printf '%s\n' secure || printf '%s\n' "$state"
+  if [[ "$state" == valid ]]; then
+    printf '%s\n' secure
+  else
+    printf '%s\n' "$state"
+  fi
 }
 
 status_allowlist_state="$(allowlist_state "$STATUS_ALLOWLIST")"
@@ -202,7 +210,7 @@ home_for_user() {
     return
   fi
   IFS=: read -r _ _ _ _ _ home _ <<< "$entry"
-  [[ -n "$home" ]] && printf '%s\n' "$home" || printf '%s\n' unknown
+  if [[ -n "$home" ]]; then printf '%s\n' "$home"; else printf '%s\n' unknown; fi
 }
 
 shell_for_user() {
@@ -213,7 +221,7 @@ shell_for_user() {
     return
   fi
   IFS=: read -r _ _ _ _ _ _ shell <<< "$entry"
-  [[ -n "$shell" ]] && printf '%s\n' "$shell" || printf '%s\n' unknown
+  if [[ -n "$shell" ]]; then printf '%s\n' "$shell"; else printf '%s\n' unknown; fi
 }
 
 version_for_user() {

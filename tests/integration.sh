@@ -19,7 +19,9 @@ cleanup() {
   local pid=""
   if sudo test -f "$PID_FILE" 2>/dev/null; then
     pid="$(sudo cat "$PID_FILE" 2>/dev/null || true)"
-    [[ "$pid" =~ ^[0-9]+$ ]] && sudo kill "$pid" 2>/dev/null || true
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+      sudo kill "$pid" 2>/dev/null || true
+    fi
   fi
 
   if [[ "$SYSTEM_CLEANUP" == true ]]; then

@@ -248,10 +248,10 @@ rollback_transaction() {
   if [[ "$NEW_ACCOUNT" == true ]] && id "$READONLY_USER" >/dev/null 2>&1; then
     userdel --remove "$READONLY_USER" >/dev/null 2>&1 || true
   fi
-  [[ "$CREATED_ACCOUNTS_DIR" == true ]] && rmdir "$ACCOUNTS_DIR" 2>/dev/null || true
-  [[ "$CREATED_MANAGED_DIR" == true ]] && rmdir "$MANAGED_DIR" 2>/dev/null || true
-  [[ "$CREATED_SSH_DIR" == true ]] && rmdir "$SSH_DIR" 2>/dev/null || true
-  [[ "$CREATED_SBIN_DIR" == true ]] && rmdir /usr/local/sbin 2>/dev/null || true
+  if [[ "$CREATED_ACCOUNTS_DIR" == true ]]; then rmdir "$ACCOUNTS_DIR" 2>/dev/null || true; fi
+  if [[ "$CREATED_MANAGED_DIR" == true ]]; then rmdir "$MANAGED_DIR" 2>/dev/null || true; fi
+  if [[ "$CREATED_SSH_DIR" == true ]]; then rmdir "$SSH_DIR" 2>/dev/null || true; fi
+  if [[ "$CREATED_SBIN_DIR" == true ]]; then rmdir /usr/local/sbin 2>/dev/null || true; fi
 }
 
 cleanup() {
