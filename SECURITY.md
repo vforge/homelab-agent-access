@@ -29,6 +29,8 @@ by the helper.
   limits are validated.
 - Root-owned per-host status and log allowlists are checked by the root helper.
 - Existing unmanaged accounts and authorized-key entries are not overwritten.
+- Managed-account metadata binds the username to a nonzero UID and canonical
+  `/home/USER` path before update or removal.
 - The agent key uses forwarding, X11, PTY, and user-rc restrictions.
 - The account password is locked and its home/SSH files are root-owned.
 - The only sudo permission is an exact no-argument root helper.

@@ -27,6 +27,7 @@ cleanup() {
       sudo userdel --remove "$TEST_USER" >/dev/null 2>&1 || true
     fi
     sudo rm -f "/etc/sudoers.d/homelab-agent-$TEST_USER"
+    sudo rm -f "/etc/homelab-agent-access/accounts/$TEST_USER"
     sudo rm -f "/etc/homelab-agent-access/$TEST_USER"
     sudo rm -f /usr/local/sbin/homelab-agent-dispatch
     sudo rm -f /usr/local/sbin/homelab-agent-dispatch-root
@@ -218,6 +219,8 @@ fi
 # Verify the managed key and audit output rather than accepting file existence.
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \
   "grep -q 'no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc' /home/$TEST_USER/.ssh/authorized_keys"
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "grep -q '^version=3$' /etc/homelab-agent-access/accounts/$TEST_USER"
 "$ROOT_DIR/bin/list" root@admin-target --json | \
   jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
     .state == "present" and .authorized_key == "present" and
@@ -236,6 +239,18 @@ if ssh -o BatchMode=yes -o RequestTTY=no \
   echo 'old agent key remained usable after rotation' >&2
   exit 1
 fi
+
+# Removal must refuse passwd state that no longer matches the recorded home.
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  usermod --home "/tmp/$TEST_USER-unsafe-home" "$TEST_USER"
+set +e
+"$ROOT_DIR/bin/remove" root@admin-target "$TEST_USER" \
+  > "$WORK_DIR/remove.stdout" 2> "$WORK_DIR/remove.stderr"
+remove_rc=$?
+set -e
+[[ "$remove_rc" -eq 65 ]]
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  usermod --home "/home/$TEST_USER" "$TEST_USER"
 
 "$ROOT_DIR/bin/remove" root@admin-target "$TEST_USER"
 if ssh -o BatchMode=yes -o RequestTTY=no agent-target ports >/dev/null 2>&1; then

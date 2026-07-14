@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 - Add disposable-host integration tests.
 - Add per-host service and log allowlists.
+- Bind managed accounts to recorded UID and canonical home metadata.
 
 ## [0.2.0] - 2026-07-12
 

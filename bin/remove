@@ -61,7 +61,7 @@ KEEP_HOME="$2"
   exit 64
 }
 
-for required in id getent userdel rm install; do
+for required in id getent userdel rm install stat cmp; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -69,19 +69,22 @@ for required in id getent userdel rm install; do
 done
 
 MANAGED_DIR="/etc/homelab-agent-access"
-MARKER="$MANAGED_DIR/$READONLY_USER"
+ACCOUNTS_DIR="$MANAGED_DIR/accounts"
+MARKER="$ACCOUNTS_DIR/$READONLY_USER"
+LEGACY_MARKER="$MANAGED_DIR/$READONLY_USER"
+EXPECTED_HOME="/home/$READONLY_USER"
 SUDOERS_FILE="/etc/sudoers.d/homelab-agent-$READONLY_USER"
 MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
 MANAGED_END="# END homelab-agent-access managed key"
 
-if [[ ! -f "$MARKER" ]]; then
+if [[ -f "$LEGACY_MARKER" || -L "$LEGACY_MARKER" ]]; then
+  echo "Legacy account metadata must be upgraded with bin/create before removal: $READONLY_USER" >&2
+  exit 73
+fi
+if [[ ! -f "$MARKER" || -L "$MARKER" ]]; then
   echo "Refusing to remove unmanaged account: $READONLY_USER" >&2
   exit 73
 fi
-grep -q '^version=2$' "$MARKER" || {
-  echo "Unsupported managed-account version: $READONLY_USER" >&2
-  exit 73
-}
 
 if ! id "$READONLY_USER" >/dev/null 2>&1; then
   rm -f "$MARKER" "$SUDOERS_FILE"
@@ -89,11 +92,26 @@ if ! id "$READONLY_USER" >/dev/null 2>&1; then
   exit 0
 fi
 
+ACCOUNT_UID=""
 HOME_DIR=""
-IFS=: read -r _ _ _ _ _ HOME_DIR _ < <(getent passwd "$READONLY_USER")
-if [[ -z "$HOME_DIR" || "$HOME_DIR" != /* || "$HOME_DIR" == / ]]; then
-  echo "invalid account home directory" >&2
+IFS=: read -r _ _ ACCOUNT_UID _ _ HOME_DIR _ < <(getent passwd "$READONLY_USER")
+if [[ ! "$ACCOUNT_UID" =~ ^[0-9]+$ || "$ACCOUNT_UID" -eq 0 ]]; then
+  echo "invalid or privileged account uid" >&2
   exit 65
+fi
+if [[ "$HOME_DIR" != "$EXPECTED_HOME" || ! -d "$HOME_DIR" || -L "$HOME_DIR" || -L /home ]]; then
+  echo "unsafe account home directory: $HOME_DIR" >&2
+  exit 65
+fi
+EXPECTED_MARKER="$(printf 'version=3\nuser=%s\nuid=%s\nhome=%s\n' \
+  "$READONLY_USER" "$ACCOUNT_UID" "$HOME_DIR")"
+if ! cmp -s <(printf '%s\n' "$EXPECTED_MARKER") "$MARKER"; then
+  echo "managed-account metadata does not match passwd state: $READONLY_USER" >&2
+  exit 73
+fi
+if [[ "$(stat -c '%u' "$HOME_DIR")" -ne 0 ]]; then
+  echo "managed account home is not root-owned" >&2
+  exit 73
 fi
 
 AUTH_KEYS="$HOME_DIR/.ssh/authorized_keys"

@@ -41,8 +41,9 @@ Re-running it replaces the root-owned host allowlists, so review changes before
 updating an account. Existing managed accounts keep their currently installed
 helper until `create` is run again with both allowlist files.
 
-The target account is marked under `/etc/homelab-agent-access/` and is refused
-if an existing account is not managed by this tool. Re-running the command
+The target account is recorded under `/etc/homelab-agent-access/accounts/`
+with its username, UID, and canonical `/home/USER` path. Existing accounts are
+refused unless that metadata matches passwd state. Re-running the command
 rotates the managed key and updates the helper files.
 
 ## Audit
@@ -106,10 +107,11 @@ partial hardware output.
 
 ## Migration and limitations
 
-Accounts created by older versions that lack the versioned management marker
-are intentionally refused. Remove or migrate them manually after review.
-Existing managed accounts are not updated automatically; rerun `create` with
-reviewed status and log allowlists after upgrading the helper.
+Accounts created by older versions that lack a versioned management marker are
+intentionally refused. Version-2 accounts with the standard `/home/USER` path
+can be migrated by rerunning `create` with reviewed status and log allowlists;
+nonstandard homes require manual review. `remove` refuses legacy metadata until
+that migration is complete.
 
 The forced command is a narrow interface, but it is not a complete OS sandbox.
 Logs may expose secrets, and a compromised agent key can query all operations

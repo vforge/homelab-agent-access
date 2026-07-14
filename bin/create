@@ -192,7 +192,7 @@ if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root
   exit 64
 fi
 
-for required in id getent useradd usermod install mktemp base64 sudo visudo; do
+for required in id getent useradd usermod install mktemp base64 sudo visudo stat cmp; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -241,7 +241,10 @@ validate_allowlist "$LOG_ALLOWLIST_TMP"
 chmod 755 "$DISPATCHER_TMP" "$ROOT_HELPER_TMP"
 
 MANAGED_DIR="/etc/homelab-agent-access"
-MARKER="$MANAGED_DIR/$READONLY_USER"
+ACCOUNTS_DIR="$MANAGED_DIR/accounts"
+MARKER="$ACCOUNTS_DIR/$READONLY_USER"
+LEGACY_MARKER="$MANAGED_DIR/$READONLY_USER"
+EXPECTED_HOME="/home/$READONLY_USER"
 DISPATCHER_PATH="/usr/local/sbin/homelab-agent-dispatch"
 ROOT_HELPER_PATH="/usr/local/sbin/homelab-agent-dispatch-root"
 STATUS_ALLOWLIST_PATH="$MANAGED_DIR/status-allowlist"
@@ -250,32 +253,60 @@ SUDOERS_FILE="/etc/sudoers.d/homelab-agent-$READONLY_USER"
 MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
 MANAGED_END="# END homelab-agent-access managed key"
 KEY_OPTIONS='no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc,command="/usr/local/sbin/homelab-agent-dispatch"'
+NEW_ACCOUNT=false
+MIGRATE_LEGACY=false
 
 install -d -o root -g root -m 755 "$MANAGED_DIR"
+install -d -o root -g root -m 755 "$ACCOUNTS_DIR"
 if id "$READONLY_USER" >/dev/null 2>&1; then
-  [[ -f "$MARKER" ]] || {
-    echo "refusing to modify unmanaged existing account: $READONLY_USER" >&2
+  if [[ -f "$MARKER" && ! -L "$MARKER" ]]; then
+    : # Version-3 metadata is verified after reading the passwd entry.
+  elif [[ -f "$LEGACY_MARKER" && ! -L "$LEGACY_MARKER" && "$(<"$LEGACY_MARKER")" == version=2 ]]; then
+    MIGRATE_LEGACY=true
+  else
+    echo "refusing to modify unmanaged or unsupported account: $READONLY_USER" >&2
     exit 73
-  }
-  grep -q '^version=2$' "$MARKER" || {
-    echo "unsupported managed-account version: $READONLY_USER" >&2
-    exit 73
-  }
+  fi
   echo "Updating managed account '$READONLY_USER'"
 else
-  useradd --create-home --shell /bin/bash --password '!' "$READONLY_USER"
-  MARKER_TMP="$(mktemp)"
-  printf 'version=2\n' > "$MARKER_TMP"
-  install -o root -g root -m 444 "$MARKER_TMP" "$MARKER"
-  rm -f "$MARKER_TMP"
+  if [[ -e "$MARKER" || -L "$MARKER" || -e "$LEGACY_MARKER" || -L "$LEGACY_MARKER" ]]; then
+    echo "refusing to recreate account with stale management metadata: $READONLY_USER" >&2
+    exit 73
+  fi
+  [[ -d /home && ! -L /home ]] || {
+    echo "expected a real /home directory" >&2
+    exit 65
+  }
+  useradd --create-home --home-dir "$EXPECTED_HOME" --shell /bin/bash --password '!' "$READONLY_USER"
+  NEW_ACCOUNT=true
   echo "Created account '$READONLY_USER'"
 fi
 
+ACCOUNT_UID=""
 HOME_DIR=""
-IFS=: read -r _ _ _ _ _ HOME_DIR _ < <(getent passwd "$READONLY_USER")
-if [[ -z "$HOME_DIR" || "$HOME_DIR" != /* || "$HOME_DIR" == / || ! -d "$HOME_DIR" || -L "$HOME_DIR" ]]; then
-  echo "invalid account home directory" >&2
+IFS=: read -r _ _ ACCOUNT_UID _ _ HOME_DIR _ < <(getent passwd "$READONLY_USER")
+if [[ ! "$ACCOUNT_UID" =~ ^[0-9]+$ || "$ACCOUNT_UID" -eq 0 ]]; then
+  echo "invalid or privileged account uid" >&2
   exit 65
+fi
+if [[ "$HOME_DIR" != "$EXPECTED_HOME" || ! -d "$HOME_DIR" || -L "$HOME_DIR" || -L /home ]]; then
+  echo "unsafe account home directory: $HOME_DIR" >&2
+  exit 65
+fi
+
+EXPECTED_MARKER="$(printf 'version=3\nuser=%s\nuid=%s\nhome=%s\n' \
+  "$READONLY_USER" "$ACCOUNT_UID" "$HOME_DIR")"
+if [[ -f "$MARKER" ]] && ! cmp -s <(printf '%s\n' "$EXPECTED_MARKER") "$MARKER"; then
+  echo "managed-account metadata does not match passwd state: $READONLY_USER" >&2
+  exit 73
+fi
+if [[ "$MIGRATE_LEGACY" == true && "$HOME_DIR" != "$EXPECTED_HOME" ]]; then
+  echo "legacy account requires manual migration because its home is nonstandard" >&2
+  exit 73
+fi
+if [[ "$NEW_ACCOUNT" == false && "$(stat -c '%u' "$HOME_DIR")" -ne 0 ]]; then
+  echo "managed account home is not root-owned" >&2
+  exit 73
 fi
 
 # The account is controlled by the forced key, not by a writable shell profile.
@@ -334,6 +365,14 @@ chmod 440 "$SUDOERS_TMP"
 chown root:root "$SUDOERS_TMP"
 visudo -cf "$SUDOERS_TMP" >/dev/null
 install -o root -g root -m 440 "$SUDOERS_TMP" "$SUDOERS_FILE"
+
+MARKER_TMP="$(mktemp)"
+printf '%s\n' "$EXPECTED_MARKER" > "$MARKER_TMP"
+install -o root -g root -m 400 "$MARKER_TMP" "$MARKER"
+rm -f "$MARKER_TMP"
+if [[ "$MIGRATE_LEGACY" == true ]]; then
+  rm -f "$LEGACY_MARKER"
+fi
 
 printf '%s\n' "Provisioned $READONLY_USER with forced operations:"
 printf '%s\n' '  status UNIT (status allowlist enforced)'

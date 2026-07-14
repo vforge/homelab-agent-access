@@ -46,7 +46,7 @@ FORMAT="$1"
   exit 64
 }
 
-for required in getent id; do
+for required in getent id grep; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -60,6 +60,7 @@ if [[ "$FORMAT" == json ]]; then
 fi
 
 MANAGED_DIR="/etc/homelab-agent-access"
+ACCOUNTS_DIR="$MANAGED_DIR/accounts"
 SUDOERS_DIR="/etc/sudoers.d"
 STATUS_ALLOWLIST="$MANAGED_DIR/status-allowlist"
 LOG_ALLOWLIST="$MANAGED_DIR/log-allowlist"
@@ -68,12 +69,23 @@ log_allowlist_state=missing
 [[ -f "$STATUS_ALLOWLIST" && ! -L "$STATUS_ALLOWLIST" ]] && status_allowlist_state=present
 [[ -f "$LOG_ALLOWLIST" && ! -L "$LOG_ALLOWLIST" ]] && log_allowlist_state=present
 users=()
-if [[ -d "$MANAGED_DIR" ]]; then
-  for marker in "$MANAGED_DIR"/*; do
-    [[ -f "$marker" ]] || continue
+if [[ -d "$ACCOUNTS_DIR" && ! -L "$ACCOUNTS_DIR" ]]; then
+  for marker in "$ACCOUNTS_DIR"/*; do
+    [[ -f "$marker" && ! -L "$marker" ]] || continue
     user="${marker##*/}"
     [[ "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$user" != root ]] || continue
-    grep -q '^version=2$' "$marker" || continue
+    grep -q '^version=3$' "$marker" || continue
+    users+=("$user")
+  done
+fi
+# Version-2 markers are listed as legacy so administrators can see accounts that
+# require an explicit create/update migration.
+if [[ -d "$MANAGED_DIR" && ! -L "$MANAGED_DIR" ]]; then
+  for marker in "$MANAGED_DIR"/*; do
+    [[ -f "$marker" && ! -L "$marker" ]] || continue
+    user="${marker##*/}"
+    [[ "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$user" != root ]] || continue
+    [[ "$(<"$marker")" == version=2 ]] || continue
     users+=("$user")
   done
 fi
@@ -100,11 +112,21 @@ shell_for_user() {
   [[ -n "$shell" ]] && printf '%s\n' "$shell" || printf '%s\n' unknown
 }
 
+version_for_user() {
+  local user="$1"
+  if [[ -f "$ACCOUNTS_DIR/$user" && ! -L "$ACCOUNTS_DIR/$user" ]]; then
+    printf '%s\n' 3
+  else
+    printf '%s\n' 2
+  fi
+}
+
 if [[ "$FORMAT" == json ]]; then
   result='[]'
   for user in "${users[@]}"; do
     home="$(home_for_user "$user")"
     shell="$(shell_for_user "$user")"
+    metadata_version="$(version_for_user "$user")"
     state=present
     id "$user" >/dev/null 2>&1 || state=stale
     key_state=missing
@@ -119,7 +141,9 @@ if [[ "$FORMAT" == json ]]; then
       --arg sudo_state "$sudo_state" \
       --arg status_allowlist "$status_allowlist_state" \
       --arg log_allowlist "$log_allowlist_state" \
+      --argjson metadata_version "$metadata_version" \
       '. + [{user: $user, home: $home, shell: $shell, state: $state,
+        metadata_version: $metadata_version,
         authorized_key: $key_state, sudoers: $sudo_state,
         status_allowlist: $status_allowlist, log_allowlist: $log_allowlist,
         operations: ["status", "logs", "ports", "hardware"]}]' <<< "$result")"
@@ -133,7 +157,8 @@ if [[ "$FORMAT" == brief ]]; then
     home="$(home_for_user "$user")"
     state=present
     id "$user" >/dev/null 2>&1 || state=stale
-    echo "$user home=$home state=$state"
+    metadata_version="$(version_for_user "$user")"
+    echo "$user home=$home state=$state metadata_version=$metadata_version"
   done
   [[ ${#users[@]} -gt 0 ]] || echo "No managed accounts found."
   exit 0
@@ -147,6 +172,7 @@ fi
 for user in "${users[@]}"; do
   home="$(home_for_user "$user")"
   shell="$(shell_for_user "$user")"
+  metadata_version="$(version_for_user "$user")"
   state=present
   id "$user" >/dev/null 2>&1 || state=stale
   key_state=missing
@@ -157,6 +183,7 @@ for user in "${users[@]}"; do
   printf '  Home:          %s\n' "$home"
   printf '  Shell:         %s\n' "$shell"
   printf '  State:         %s\n' "$state"
+  printf '  Metadata:      version %s\n' "$metadata_version"
   printf '  Managed key:   %s\n' "$key_state"
   printf '  Sudo helper:   %s\n' "$sudo_state"
   printf '  Status list:   %s\n' "$status_allowlist_state"
