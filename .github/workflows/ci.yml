@@ -23,4 +23,14 @@ jobs:
         run: make test
 
       - name: Run ShellCheck
-        run: make lint
+        shell: bash
+        run: |
+          set +e
+          make lint 2>&1 | tee "$RUNNER_TEMP/shellcheck.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          if (( rc != 0 )); then
+            summary="$(tail -n 30 "$RUNNER_TEMP/shellcheck.log" | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::error::$summary"
+            exit "$rc"
+          fi

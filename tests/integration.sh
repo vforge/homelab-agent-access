@@ -56,6 +56,7 @@ for required in ssh ssh-keygen ssh-keyscan sudo python3 jq; do
     exit 69
   }
 done
+REAL_SSH="$(command -v ssh)"
 for required in /usr/sbin/sshd /usr/sbin/visudo; do
   [[ -x "$required" ]] || {
     echo "missing local test command: $required" >&2
@@ -168,6 +169,16 @@ Host agent-target
 EOF
 chmod 600 "$SSH_DIR/config"
 export HOME="$SSH_HOME"
+export HAA_TEST_REAL_SSH="$REAL_SSH"
+export HAA_TEST_SSH_CONFIG="$SSH_DIR/config"
+mkdir -p "$WORK_DIR/bin"
+cat > "$WORK_DIR/bin/ssh" <<'SSH_WRAPPER'
+#!/usr/bin/env bash
+exec "${HAA_TEST_REAL_SSH:?}" -F "${HAA_TEST_SSH_CONFIG:?}" "$@"
+SSH_WRAPPER
+chmod 755 "$WORK_DIR/bin/ssh"
+PATH="$WORK_DIR/bin:$PATH"
+export PATH
 
 expect_agent_rc() {
   local expected="$1" request="$2" rc
