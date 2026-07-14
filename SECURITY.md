@@ -35,7 +35,8 @@ by the helper.
   `/home/USER` path before update or removal.
 - The agent key uses OpenSSH `restrict` plus explicit forwarding, X11, PTY,
   agent-forwarding, and user-rc restrictions.
-- The account password is locked and its home/SSH files are root-owned.
+- The account has an impossible password hash (without locking public-key
+  access), and its home/SSH files are root-owned.
 - Managed metadata, authorized keys, and allowlists are root-only readable.
 - The only sudo permission is an exact no-argument root helper.
 - The root helper uses fixed absolute command paths and does not evaluate shell

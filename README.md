@@ -23,7 +23,7 @@ See [DISCLAIMER.md](DISCLAIMER.md) for the short version.
 
 An administrator runs the provisioning scripts once. They install:
 
-1. A dedicated locked-password Unix account.
+1. A dedicated Unix account with an impossible password hash.
 2. A root-owned SSH forced-command dispatcher.
 3. A root-owned helper reachable only through an exact sudoers rule.
 4. Root-owned per-host status and log unit allowlists.

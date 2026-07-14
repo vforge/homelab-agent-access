@@ -239,7 +239,7 @@ ssh -o BatchMode=yes -o RequestTTY=no admin-target \
 "$ROOT_DIR/bin/list" root@admin-target --json | \
   jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
     .state == "present" and .metadata == "valid" and
-    .home_security == "secure" and .password == "locked" and
+    .home_security == "secure" and .password == "disabled" and
     .authorized_key == "valid" and .sudoers == "valid" and
     .status_allowlist == "valid" and .log_allowlist == "valid" and
     .dispatcher == "secure" and .root_helper == "secure")' >/dev/null

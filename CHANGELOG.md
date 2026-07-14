@@ -10,6 +10,7 @@ All notable changes to this project are documented here.
 - Preflight provisioning and roll back failed managed-file installations.
 - Strengthen managed-state auditing, file permissions, and SSH key restrictions.
 - Add ShellCheck validation to local tooling and CI.
+- Keep password authentication disabled without locking SSH public-key access.
 
 ## [0.2.0] - 2026-07-12
 

@@ -57,7 +57,7 @@ Re-running the command rotates the managed key and updates the helper files.
 ```
 
 `--json` requires `jq` on the target. The audit validates account metadata,
-home ownership/mode, password locking, the managed authorized-key block, exact
+home ownership/mode, password disabling, the managed authorized-key block, exact
 sudoers content, allowlist syntax, and expected root ownership/modes. States
 are `valid`, `missing`, `invalid`, `unsafe`, `legacy`, or `stale` as applicable.
 Dispatcher fields report `secure`

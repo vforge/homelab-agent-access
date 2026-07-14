@@ -249,10 +249,12 @@ password_state_for_user() {
   entry="$(getent shadow "$user" 2>/dev/null || true)"
   [[ -n "$entry" ]] || { printf '%s\n' unknown; return; }
   IFS=: read -r _ password _ <<< "$entry"
-  if [[ "$password" == '!'* || "$password" == '*'* ]]; then
-    printf '%s\n' locked
+  if [[ "$password" == '*' ]]; then
+    printf '%s\n' disabled
+  elif [[ "$password" == '!'* ]]; then
+    printf '%s\n' account_locked
   else
-    printf '%s\n' unlocked
+    printf '%s\n' enabled
   fi
 }
 

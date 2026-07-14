@@ -338,7 +338,7 @@ else
     echo "expected a real /home directory" >&2
     exit 65
   }
-  useradd --create-home --home-dir "$EXPECTED_HOME" --shell /bin/bash --password '!' "$READONLY_USER"
+  useradd --create-home --home-dir "$EXPECTED_HOME" --shell /bin/bash --password '*' "$READONLY_USER"
   NEW_ACCOUNT=true
   echo "Created account '$READONLY_USER'"
 fi
@@ -528,7 +528,9 @@ if [[ "$MIGRATE_LEGACY" == true ]]; then
 fi
 
 # The account is controlled by the forced key, not by a writable shell profile.
-usermod --lock "$READONLY_USER"
+# `!` locks the whole account on Linux when sshd runs without PAM. `*` is an
+# impossible password hash while leaving public-key authentication available.
+usermod --password '*' "$READONLY_USER"
 if [[ "$NEW_ACCOUNT" == true ]]; then
   chown root:root "$HOME_DIR"
   chmod 755 "$HOME_DIR"
