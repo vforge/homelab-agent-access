@@ -1,0 +1,25 @@
+name: Disposable integration
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Ubuntu disposable host
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install integration dependencies
+        run: sudo apt-get update && sudo apt-get install --yes jq iproute2 openssh-server python3 sudo
+
+      - name: Run disposable-host integration test
+        run: ./tests/integration.sh

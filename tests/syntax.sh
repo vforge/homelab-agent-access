@@ -9,7 +9,8 @@ for script in \
   "$ROOT_DIR/bin/remove" \
   "$ROOT_DIR/remote/homelab-agent-dispatch" \
   "$ROOT_DIR/remote/homelab-agent-dispatch-root" \
-  "$ROOT_DIR/tests/cli.sh"; do
+  "$ROOT_DIR/tests/cli.sh" \
+  "$ROOT_DIR/tests/integration.sh"; do
   printf 'Checking %s\n' "${script#"$ROOT_DIR/"}"
   bash -n "$script"
 done

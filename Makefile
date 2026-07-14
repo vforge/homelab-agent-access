@@ -1,4 +1,4 @@
-.PHONY: test syntax cli
+.PHONY: test syntax cli integration
 
 test: syntax cli
 	@git diff --check
@@ -8,3 +8,6 @@ syntax:
 
 cli:
 	@./tests/cli.sh
+
+integration:
+	@./tests/integration.sh

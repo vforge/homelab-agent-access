@@ -28,7 +28,8 @@ bash -n bin/remove
 bash -n remote/homelab-agent-dispatch remote/homelab-agent-dispatch-root
 ```
 
-`make test` also runs local request-validation tests without contacting a host.
+`make test` runs local syntax and request-validation tests without contacting a
+host. `make integration` requires an ephemeral Linux host and passwordless sudo.
 Security-sensitive changes need disposable-host integration tests and an update
 to `SECURITY.md` and the changelog.
 
