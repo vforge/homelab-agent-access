@@ -94,8 +94,9 @@ operation; each file is limited to 65,536 bytes and 1,024 units. `status` and
 `logs` requests for units absent from their respective allowlist are rejected;
 `ports` and `hardware` are unaffected.
 
-The scripts refuse to modify unmanaged existing accounts and preserve only
-comments plus the managed key block in `authorized_keys`. See
+The scripts refuse to modify unmanaged existing accounts or adopt unproven
+fixed helper paths. They preserve only comments plus the managed key block in
+`authorized_keys`. See
 [`bin/README.md`](bin/README.md) for the administrator command reference.
 
 ## Agent usage

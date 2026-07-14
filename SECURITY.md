@@ -30,12 +30,14 @@ by the helper.
 ## Current security properties
 
 - Provisioning payloads are encoded before being passed through SSH arguments.
-- Provisioning preflights managed files, validates sudoers before installation,
-  installs file replacements atomically, and rolls them back on failure.
+- Provisioning preflights managed files, refuses unproven fixed helper paths,
+  validates existing managed file ownership, modes, formats, and sudoers content,
+  installs replacements atomically, and rolls them back on failure.
 - Usernames, public keys, allowlist unit names, request unit names, and log
   limits are validated.
 - Root-owned per-host status and log allowlists are checked by the root helper.
-- Existing unmanaged accounts and authorized-key entries are not overwritten.
+- Existing unmanaged accounts, pre-existing homes for new accounts, and
+  authorized-key entries are not overwritten or adopted.
 - Managed-account metadata binds the username to a nonzero UID and canonical
   `/home/USER` path before update or removal.
 - The agent key uses OpenSSH `restrict` plus explicit forwarding, X11, PTY,
@@ -64,13 +66,14 @@ by the helper.
 - Status and log allowlists are currently host-wide, not per identity; multiple
   managed agents on one host therefore share those policy scopes.
 - Installed helper ownership and mode are audited, but those checks do not yet
-  attest that helper content matches the expected templates. Provisioning
-  treats the documented fixed helper and policy paths as project-managed and
-  can replace existing regular files there after path-safety checks.
-- If an account is already absent, stale-state removal validates the marker's
-  type, owner, and mode but does not verify the contents of that marker or the
-  same-named sudoers file before deleting both. It does not remove a home in
-  this path.
+  attest that helper content matches the expected templates. Update preflight
+  recognizes existing helpers by root ownership, mode, the project state
+  directory, and their management header; cryptographic content attestation is
+  still pending.
+- If an account is already absent, stale-state removal validates the metadata
+  shape and exact sudoers content before deleting those two files. It cannot
+  compare the recorded UID with absent passwd state and deliberately does not
+  remove a home in this path.
 - The system has no built-in request audit trail or server-side output
   redaction; agent-side minimization is not a technical confidentiality
   boundary.

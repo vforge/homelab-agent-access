@@ -7,6 +7,9 @@ All notable changes to this project are documented here.
 - Document the accepted minimal SSH capability-gateway architecture, its trust
   boundaries, alternatives, invariants, evolution priorities, and
   reconsideration triggers.
+- Refuse unproven fixed helper replacements and pre-existing homes for new
+  accounts, and validate stale account metadata and sudoers content before
+  cleanup.
 - Add disposable-host integration tests.
 - Add per-host service and log allowlists.
 - Bind managed accounts to recorded UID and canonical home metadata.

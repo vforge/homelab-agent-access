@@ -28,6 +28,7 @@ cleanup() {
     if id "$TEST_USER" >/dev/null 2>&1; then
       sudo userdel --remove "$TEST_USER" >/dev/null 2>&1 || true
     fi
+    sudo rm -rf --one-file-system -- "/home/$TEST_USER"
     sudo rm -f "/etc/sudoers.d/homelab-agent-$TEST_USER"
     sudo rm -f "/etc/homelab-agent-access/accounts/$TEST_USER"
     sudo rm -f "/etc/homelab-agent-access/$TEST_USER"
@@ -197,6 +198,42 @@ expect_agent_rc() {
 }
 
 ssh -o BatchMode=yes -o RequestTTY=no admin-target true
+
+# A first installation must not adopt or replace a fixed helper path that has
+# no corresponding managed installation state.
+printf '%s\n' '#!/bin/bash' '# unrelated file' > "$WORK_DIR/unmanaged-dispatcher"
+sudo install -o root -g root -m 755 "$WORK_DIR/unmanaged-dispatcher" \
+  /usr/local/sbin/homelab-agent-dispatch
+set +e
+"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY.pub" --user "$TEST_USER" \
+  --status-allowlist "$STATUS_ALLOWLIST" \
+  --log-allowlist "$LOG_ALLOWLIST" \
+  > "$WORK_DIR/collision.stdout" 2> "$WORK_DIR/collision.stderr"
+collision_rc=$?
+set -e
+[[ "$collision_rc" -eq 73 ]]
+sudo cmp "$WORK_DIR/unmanaged-dispatcher" /usr/local/sbin/homelab-agent-dispatch
+if id "$TEST_USER" >/dev/null 2>&1; then
+  echo 'failed provisioning left the test account behind' >&2
+  exit 1
+fi
+sudo test ! -e /etc/homelab-agent-access
+sudo rm -f /usr/local/sbin/homelab-agent-dispatch
+
+# Failed provisioning must never adopt and later remove a pre-existing home.
+sudo install -d -o root -g root -m 755 "/home/$TEST_USER"
+sudo touch "/home/$TEST_USER/unmanaged-sentinel"
+set +e
+"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY.pub" --user "$TEST_USER" \
+  --status-allowlist "$STATUS_ALLOWLIST" \
+  --log-allowlist "$LOG_ALLOWLIST" \
+  > "$WORK_DIR/home-collision.stdout" 2> "$WORK_DIR/home-collision.stderr"
+home_collision_rc=$?
+set -e
+[[ "$home_collision_rc" -eq 73 ]]
+sudo test -f "/home/$TEST_USER/unmanaged-sentinel"
+sudo rm -rf --one-file-system -- "/home/$TEST_USER"
+
 "$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY.pub" --user "$TEST_USER" \
   --status-allowlist "$STATUS_ALLOWLIST" \
   --log-allowlist "$LOG_ALLOWLIST"
@@ -301,5 +338,35 @@ if ssh -o BatchMode=yes -o RequestTTY=no agent-target ports >/dev/null 2>&1; the
   echo 'removed account still accepted SSH access' >&2
   exit 1
 fi
+
+# If passwd state disappears before managed cleanup, removal must validate both
+# residual metadata and sudoers content before deleting either file.
+"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY_2.pub" --user "$TEST_USER" \
+  --status-allowlist "$STATUS_ALLOWLIST" \
+  --log-allowlist "$LOG_ALLOWLIST"
+ssh -o BatchMode=yes -o RequestTTY=no admin-target userdel "$TEST_USER"
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "printf '%s\\n' tampered >> /etc/homelab-agent-access/accounts/$TEST_USER"
+set +e
+"$ROOT_DIR/bin/remove" root@admin-target "$TEST_USER" \
+  > "$WORK_DIR/stale-marker.stdout" 2> "$WORK_DIR/stale-marker.stderr"
+stale_marker_rc=$?
+set -e
+[[ "$stale_marker_rc" -eq 73 ]]
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "test -e /etc/homelab-agent-access/accounts/$TEST_USER && sed -i '\$d' /etc/homelab-agent-access/accounts/$TEST_USER"
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "printf '\\n' >> /etc/sudoers.d/homelab-agent-$TEST_USER"
+set +e
+"$ROOT_DIR/bin/remove" root@admin-target "$TEST_USER" \
+  > "$WORK_DIR/stale-sudoers.stdout" 2> "$WORK_DIR/stale-sudoers.stderr"
+stale_sudoers_rc=$?
+set -e
+[[ "$stale_sudoers_rc" -eq 73 ]]
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "test -e /etc/sudoers.d/homelab-agent-$TEST_USER && sed -i '\$d' /etc/sudoers.d/homelab-agent-$TEST_USER"
+"$ROOT_DIR/bin/remove" root@admin-target "$TEST_USER"
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "test ! -e /etc/homelab-agent-access/accounts/$TEST_USER && test ! -e /etc/sudoers.d/homelab-agent-$TEST_USER && test -d /home/$TEST_USER"
 
 printf '%s\n' 'Disposable Linux integration test passed.'

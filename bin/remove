@@ -93,9 +93,38 @@ if [[ "$(stat -c '%u' "$MARKER")" -ne 0 || "$(stat -c '%a' "$MARKER")" != 400 ]]
   exit 73
 fi
 
+EXPECTED_SUDOERS="$(printf '%s\n%s ALL=(root) NOPASSWD: /usr/local/sbin/homelab-agent-dispatch-root \"\"' \
+  '# Managed by homelab-agent-access. Do not edit manually.' "$READONLY_USER")"
+validate_sudoers_file() {
+  if [[ -L "$SUDOERS_FILE" || ( -e "$SUDOERS_FILE" && ! -f "$SUDOERS_FILE" ) ]]; then
+    echo "unsafe sudoers path" >&2
+    exit 73
+  fi
+  if [[ -f "$SUDOERS_FILE" ]]; then
+    if [[ "$(stat -c '%u' "$SUDOERS_FILE")" -ne 0 || \
+          "$(stat -c '%a' "$SUDOERS_FILE")" != 440 ]] || \
+       ! cmp -s <(printf '%s\n' "$EXPECTED_SUDOERS") "$SUDOERS_FILE"; then
+      echo "refusing to remove invalid or unsafe sudoers file" >&2
+      exit 73
+    fi
+  fi
+}
+validate_sudoers_file
+
 if ! id "$READONLY_USER" >/dev/null 2>&1; then
+  marker_lines=()
+  mapfile -t marker_lines < "$MARKER"
+  if [[ ${#marker_lines[@]} -ne 4 || \
+        "${marker_lines[0]}" != version=3 || \
+        "${marker_lines[1]}" != "user=$READONLY_USER" || \
+        ! "${marker_lines[2]}" =~ ^uid=([0-9]+)$ || \
+        "${BASH_REMATCH[1]}" -eq 0 || \
+        "${marker_lines[3]}" != "home=$EXPECTED_HOME" ]]; then
+    echo "refusing stale cleanup with invalid management metadata: $READONLY_USER" >&2
+    exit 73
+  fi
   rm -f "$MARKER" "$SUDOERS_FILE"
-  echo "Account was already absent; removed stale management metadata."
+  echo "Account was already absent; removed verified stale management files."
   exit 0
 fi
 
@@ -163,20 +192,6 @@ if [[ -f "$AUTH_KEYS" ]]; then
   fi
 fi
 
-if [[ -L "$SUDOERS_FILE" || ( -e "$SUDOERS_FILE" && ! -f "$SUDOERS_FILE" ) ]]; then
-  echo "unsafe sudoers path" >&2
-  exit 73
-fi
-if [[ -f "$SUDOERS_FILE" ]]; then
-  EXPECTED_SUDOERS="$(printf '%s\n%s ALL=(root) NOPASSWD: /usr/local/sbin/homelab-agent-dispatch-root \"\"' \
-    '# Managed by homelab-agent-access. Do not edit manually.' "$READONLY_USER")"
-  if [[ "$(stat -c '%u' "$SUDOERS_FILE")" -ne 0 || \
-        "$(stat -c '%a' "$SUDOERS_FILE")" != 440 || \
-        "$(<"$SUDOERS_FILE")" != "$EXPECTED_SUDOERS" ]]; then
-    echo "refusing to remove invalid or unsafe sudoers file" >&2
-    exit 73
-  fi
-fi
 rm -f "$SUDOERS_FILE"
 userdel "$READONLY_USER"
 if [[ "$KEEP_HOME" == true ]]; then

@@ -43,9 +43,12 @@ helper until `create` is run again with both allowlist files.
 
 The target account is recorded under `/etc/homelab-agent-access/accounts/`
 with its username, UID, and canonical `/home/USER` path. Existing accounts are
-refused unless that metadata matches passwd state. The command preflights the
-managed key and sudoers content before replacing global files, uses same-directory
-atomic file replacements, and restores prior files if installation fails.
+refused unless that metadata matches passwd state, and a new account is refused
+if its expected home already exists. A first installation refuses pre-existing
+fixed helper paths. Updates require secure project state,
+recognizable root-owned helpers, valid existing allowlists, and exact managed
+sudoers/metadata content before replacement. The command uses same-directory
+atomic file replacements and restores prior files if installation fails.
 Re-running the command rotates the managed key and updates the helper files.
 
 ## Audit
@@ -75,7 +78,9 @@ Removal deletes the managed key block, the per-account sudoers rule, the
 account marker, and the account. It does not delete the host-level allowlists;
 those remain for other managed accounts and must be reviewed separately.
 `--keep-home` preserves the home directory. Unmanaged accounts are never
-removed.
+removed. If passwd state is already absent, removal validates the residual
+metadata shape and exact sudoers content before deleting those two files; it
+never removes a home in that stale-state path.
 
 ## Installed remote interface
 

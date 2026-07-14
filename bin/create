@@ -323,11 +323,33 @@ MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
 MANAGED_END="# END homelab-agent-access managed key"
 KEY_OPTIONS='restrict,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,no-user-rc,command="/usr/local/sbin/homelab-agent-dispatch"'
 MIGRATE_LEGACY=false
+MANAGED_DIR_WAS_PRESENT=false
+if [[ -d "$MANAGED_DIR" && ! -L "$MANAGED_DIR" ]]; then
+  MANAGED_DIR_WAS_PRESENT=true
+fi
+
+secure_existing_file() {
+  local file="$1" mode="$2"
+  [[ -f "$file" && ! -L "$file" ]] || {
+    echo "unsafe managed file path: $file" >&2
+    exit 73
+  }
+  if [[ "$(stat -c '%u' "$file")" -ne 0 || "$(stat -c '%a' "$file")" != "$mode" ]]; then
+    echo "unsafe managed file ownership or mode: $file" >&2
+    exit 73
+  fi
+}
 
 if id "$READONLY_USER" >/dev/null 2>&1; then
   if [[ -f "$MARKER" && ! -L "$MARKER" ]]; then
+    secure_existing_file "$MARKER" 400
     : # Version-3 metadata is verified after reading the passwd entry.
-  elif [[ -f "$LEGACY_MARKER" && ! -L "$LEGACY_MARKER" && "$(<"$LEGACY_MARKER")" == version=2 ]]; then
+  elif [[ -f "$LEGACY_MARKER" && ! -L "$LEGACY_MARKER" ]]; then
+    secure_existing_file "$LEGACY_MARKER" 400
+    [[ "$(<"$LEGACY_MARKER")" == version=2 ]] || {
+      echo "refusing to modify unsupported legacy metadata: $READONLY_USER" >&2
+      exit 73
+    }
     MIGRATE_LEGACY=true
   else
     echo "refusing to modify unmanaged or unsupported account: $READONLY_USER" >&2
@@ -343,6 +365,10 @@ else
     echo "expected a real /home directory" >&2
     exit 65
   }
+  if [[ -e "$EXPECTED_HOME" || -L "$EXPECTED_HOME" ]]; then
+    echo "refusing to create account with a pre-existing home: $EXPECTED_HOME" >&2
+    exit 73
+  fi
   useradd --create-home --home-dir "$EXPECTED_HOME" --shell /bin/bash --password '*' "$READONLY_USER"
   NEW_ACCOUNT=true
   echo "Created account '$READONLY_USER'"
@@ -475,6 +501,55 @@ visudo -cf "$SUDOERS_TMP" >/dev/null
 
 MARKER_TMP="$(mktemp)"
 printf '%s\n' "$EXPECTED_MARKER" > "$MARKER_TMP"
+
+validate_helper_provenance() {
+  local file="$1" expected_comment="$2" first="" second="" third="" fourth=""
+  [[ -e "$file" || -L "$file" ]] || return 0
+  if [[ "$MANAGED_DIR_WAS_PRESENT" != true ]]; then
+    echo "refusing to replace helper without managed installation state: $file" >&2
+    exit 73
+  fi
+  secure_existing_file "$file" 755
+  {
+    IFS= read -r first || true
+    IFS= read -r second || true
+    IFS= read -r third || true
+    IFS= read -r fourth || true
+  } < "$file"
+  if [[ "$first" != '#!/bin/bash' || "$second" != 'set -euo pipefail' || \
+        -n "$third" || "$fourth" != "$expected_comment" ]]; then
+    echo "refusing to replace helper without managed provenance: $file" >&2
+    exit 73
+  fi
+}
+
+validate_existing_allowlist() {
+  local file="$1"
+  [[ -e "$file" || -L "$file" ]] || return 0
+  secure_existing_file "$file" 400
+  validate_allowlist "$file"
+}
+
+validate_helper_provenance "$DISPATCHER_PATH" \
+  '# This file is installed root-owned and used as an SSH authorized-key forced command.'
+validate_helper_provenance "$ROOT_HELPER_PATH" \
+  '# This file is installed root-owned and is the only privileged operation'
+validate_existing_allowlist "$STATUS_ALLOWLIST_PATH"
+validate_existing_allowlist "$LOG_ALLOWLIST_PATH"
+if [[ -e "$SUDOERS_FILE" || -L "$SUDOERS_FILE" ]]; then
+  secure_existing_file "$SUDOERS_FILE" 440
+  cmp -s "$SUDOERS_TMP" "$SUDOERS_FILE" || {
+    echo "refusing to replace sudoers file without managed provenance: $SUDOERS_FILE" >&2
+    exit 73
+  }
+fi
+if [[ -e "$MARKER" || -L "$MARKER" ]]; then
+  secure_existing_file "$MARKER" 400
+  cmp -s "$MARKER_TMP" "$MARKER" || {
+    echo "refusing to replace mismatched account metadata: $MARKER" >&2
+    exit 73
+  }
+fi
 
 backup_target() {
   local target="$1" label="$2"

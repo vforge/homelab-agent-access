@@ -276,14 +276,14 @@ restricting the underlying operation.
   no general CPU, memory, wall-clock, output-size, or egress sandbox.
 - **Policy drift:** stale host-wide allowlists can remain after an identity is
   removed and may affect another managed identity later.
-- **Fixed-path replacement:** provisioning treats the documented helper and
-  policy paths as belonging to this project. Existing regular files at those
-  exact paths can be backed up and replaced without content attestation; those
-  paths must be reserved for this tool.
-- **Stale-account cleanup:** when passwd state is already absent, removal checks
-  the marker's type, owner, and mode, then deletes the same-named marker and
-  sudoers path without validating their contents. It does not remove a home in
-  this path, but the residual-file cleanup needs further hardening.
+- **Fixed-path provenance:** a first installation refuses existing helper
+  paths, while updates require secure project state and recognizable root-owned
+  helper files. Exact content attestation is still needed to distinguish an
+  approved older helper from modified content before replacement.
+- **Stale-account cleanup:** when passwd state is already absent, removal
+  validates the metadata shape and exact sudoers content before deleting those
+  files. It cannot compare the recorded UID with absent passwd state and does
+  not remove a home in this path.
 - **Integrity drift:** ownership and mode checks do not by themselves prove that
   an installed helper has the expected content.
 - **Availability:** missing Linux/systemd inspection tools produce errors or
