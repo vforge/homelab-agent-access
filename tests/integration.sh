@@ -272,7 +272,7 @@ ssh -o BatchMode=yes -o RequestTTY=no admin-target \
 "$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY_2.pub" --user "$TEST_USER" \
   --status-allowlist "$STATUS_ALLOWLIST" \
   --log-allowlist "$LOG_ALLOWLIST"
-sed -i "s#IdentityFile .*agent-key$#IdentityFile $AGENT_KEY_2#" "$SSH_DIR/config"
+sed -i "s#^  IdentityFile $AGENT_KEY\$#  IdentityFile $AGENT_KEY_2#" "$SSH_DIR/config"
 ssh -o BatchMode=yes -o RequestTTY=no agent-target ports >/dev/null
 if ssh -o BatchMode=yes -o RequestTTY=no \
   -o IdentitiesOnly=yes -o IdentityFile="$AGENT_KEY" \
