@@ -295,6 +295,8 @@ ssh -o BatchMode=yes -o RequestTTY=no admin-target \
   usermod --home "/home/$TEST_USER" "$TEST_USER"
 
 "$ROOT_DIR/bin/remove" root@admin-target "$TEST_USER"
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  test ! -e "/home/$TEST_USER"
 if ssh -o BatchMode=yes -o RequestTTY=no agent-target ports >/dev/null 2>&1; then
   echo 'removed account still accepted SSH access' >&2
   exit 1

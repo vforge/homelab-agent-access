@@ -178,11 +178,13 @@ if [[ -f "$SUDOERS_FILE" ]]; then
   fi
 fi
 rm -f "$SUDOERS_FILE"
+userdel "$READONLY_USER"
 if [[ "$KEEP_HOME" == true ]]; then
-  userdel "$READONLY_USER"
   echo "Removed account '$READONLY_USER'; preserved home at $HOME_DIR"
 else
-  userdel --remove "$READONLY_USER"
+  # userdel --remove commonly refuses a root-owned home. The path and metadata
+  # were verified above, so remove that exact canonical home explicitly.
+  rm -rf --one-file-system -- "$HOME_DIR"
   echo "Removed account '$READONLY_USER' and home directory"
 fi
 rm -f "$MARKER"
