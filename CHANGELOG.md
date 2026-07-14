@@ -11,6 +11,7 @@ All notable changes to this project are documented here.
 - Strengthen managed-state auditing, file permissions, and SSH key restrictions.
 - Add ShellCheck validation to local tooling and CI.
 - Keep password authentication disabled without locking SSH public-key access.
+- Make root-owned public keys readable to sshd's unprivileged account lookup.
 
 ## [0.2.0] - 2026-07-12
 

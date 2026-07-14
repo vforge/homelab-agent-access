@@ -128,13 +128,13 @@ if [[ -L "$SSH_DIR" || ( -e "$SSH_DIR" && ! -d "$SSH_DIR" ) || -L "$AUTH_KEYS" ]
   exit 73
 fi
 if [[ -e "$SSH_DIR" ]] && {
-  [[ "$(stat -c '%u' "$SSH_DIR")" -ne 0 || "$(stat -c '%a' "$SSH_DIR")" != 700 ]];
+  [[ "$(stat -c '%u' "$SSH_DIR")" -ne 0 || "$(stat -c '%a' "$SSH_DIR")" != 755 ]];
 }; then
   echo "unsafe account SSH directory ownership or mode" >&2
   exit 73
 fi
 if [[ -f "$AUTH_KEYS" ]]; then
-  if [[ "$(stat -c '%u' "$AUTH_KEYS")" -ne 0 || "$(stat -c '%a' "$AUTH_KEYS")" != 400 ]]; then
+  if [[ "$(stat -c '%u' "$AUTH_KEYS")" -ne 0 || "$(stat -c '%a' "$AUTH_KEYS")" != 444 ]]; then
     echo "unsafe authorized_keys ownership or mode" >&2
     exit 73
   fi

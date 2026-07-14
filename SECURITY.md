@@ -37,7 +37,9 @@ by the helper.
   agent-forwarding, and user-rc restrictions.
 - The account has an impossible password hash (without locking public-key
   access), and its home/SSH files are root-owned.
-- Managed metadata, authorized keys, and allowlists are root-only readable.
+- Managed metadata and allowlists are root-only readable. The public
+  `authorized_keys` file is root-owned and read-only but readable by sshd's
+  unprivileged account lookup.
 - The only sudo permission is an exact no-argument root helper.
 - The root helper uses fixed absolute command paths and does not evaluate shell
   input.

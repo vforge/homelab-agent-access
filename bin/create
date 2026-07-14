@@ -231,6 +231,7 @@ CREATED_MANAGED_DIR=false
 CREATED_ACCOUNTS_DIR=false
 CREATED_SBIN_DIR=false
 CREATED_SSH_DIR=false
+ORIGINAL_SSH_MODE=""
 BACKUP_TARGETS=()
 BACKUP_LABELS=()
 
@@ -250,7 +251,11 @@ rollback_transaction() {
   fi
   if [[ "$CREATED_ACCOUNTS_DIR" == true ]]; then rmdir "$ACCOUNTS_DIR" 2>/dev/null || true; fi
   if [[ "$CREATED_MANAGED_DIR" == true ]]; then rmdir "$MANAGED_DIR" 2>/dev/null || true; fi
-  if [[ "$CREATED_SSH_DIR" == true ]]; then rmdir "$SSH_DIR" 2>/dev/null || true; fi
+  if [[ "$CREATED_SSH_DIR" == true ]]; then
+    rmdir "$SSH_DIR" 2>/dev/null || true
+  elif [[ -n "$ORIGINAL_SSH_MODE" && -d "$SSH_DIR" ]]; then
+    chmod "$ORIGINAL_SSH_MODE" "$SSH_DIR" 2>/dev/null || true
+  fi
   if [[ "$CREATED_SBIN_DIR" == true ]]; then rmdir /usr/local/sbin 2>/dev/null || true; fi
 }
 
@@ -416,10 +421,11 @@ if [[ -e "$SSH_DIR" || -L "$SSH_DIR" ]]; then
     exit 73
   fi
   secure_directory "$SSH_DIR"
-  [[ "$(stat -c '%a' "$SSH_DIR")" == 700 ]] || {
-    echo "managed account SSH directory has unsafe permissions" >&2
-    exit 73
-  }
+  ORIGINAL_SSH_MODE="$(stat -c '%a' "$SSH_DIR")"
+  case "$ORIGINAL_SSH_MODE" in
+    700|755) ;;
+    *) echo "managed account SSH directory has unsafe permissions" >&2; exit 73 ;;
+  esac
 fi
 if [[ -L "$AUTH_KEYS" || ( -e "$AUTH_KEYS" && ! -f "$AUTH_KEYS" ) ]]; then
   echo "unsafe authorized_keys path" >&2
@@ -536,15 +542,17 @@ if [[ "$NEW_ACCOUNT" == true ]]; then
   chmod 755 "$HOME_DIR"
 fi
 if [[ ! -e "$SSH_DIR" ]]; then
-  install -d -o root -g root -m 700 "$SSH_DIR"
+  install -d -o root -g root -m 755 "$SSH_DIR"
   CREATED_SSH_DIR=true
+else
+  chmod 755 "$SSH_DIR"
 fi
 
 atomic_install "$DISPATCHER_TMP" "$DISPATCHER_PATH" 755
 atomic_install "$ROOT_HELPER_TMP" "$ROOT_HELPER_PATH" 755
 atomic_install "$STATUS_ALLOWLIST_TMP" "$STATUS_ALLOWLIST_PATH" 400
 atomic_install "$LOG_ALLOWLIST_TMP" "$LOG_ALLOWLIST_PATH" 400
-atomic_install "$AUTH_TMP" "$AUTH_KEYS" 400
+atomic_install "$AUTH_TMP" "$AUTH_KEYS" 444
 atomic_install "$SUDOERS_TMP" "$SUDOERS_FILE" 440
 atomic_install "$MARKER_TMP" "$MARKER" 400
 if [[ "$MIGRATE_LEGACY" == true ]]; then

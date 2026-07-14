@@ -108,10 +108,10 @@ managed_key_state() {
   [[ "$home" == /home/* ]] || { printf '%s\n' missing; return; }
   ssh_dir="$home/.ssh"
   auth="$ssh_dir/authorized_keys"
-  state="$(secure_file_state "$auth" 400)"
+  state="$(secure_file_state "$auth" 444)"
   [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
   if [[ ! -d "$ssh_dir" || -L "$ssh_dir" || "$(stat -c '%u' "$ssh_dir")" -ne 0 || \
-        "$(stat -c '%a' "$ssh_dir")" != 700 ]]; then
+        "$(stat -c '%a' "$ssh_dir")" != 755 ]]; then
     printf '%s\n' unsafe
     return
   fi

@@ -97,8 +97,9 @@ interpret arbitrary shell input.
 The generated key uses OpenSSH's `restrict` option plus explicit restrictions
 for port forwarding, X11 forwarding, agent forwarding, PTY allocation, and
 per-user SSH rc files. The generated sudoers rule permits only the root helper
-with no command-line arguments. Managed metadata, keys, and allowlists are
-root-only readable.
+with no command-line arguments. Managed metadata and allowlists are root-only
+readable. The public authorized-key file is root-owned and read-only while
+remaining readable to sshd's unprivileged account lookup.
 
 ## Target requirements
 
