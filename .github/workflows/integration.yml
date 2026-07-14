@@ -16,10 +16,20 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Install integration dependencies
         run: sudo apt-get update && sudo apt-get install --yes jq iproute2 openssh-server python3 sudo
 
       - name: Run disposable-host integration test
-        run: ./tests/integration.sh
+        shell: bash
+        run: |
+          set +e
+          ./tests/integration.sh 2>&1 | tee "$RUNNER_TEMP/integration.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          if (( rc != 0 )); then
+            summary="$(tail -n 20 "$RUNNER_TEMP/integration.log" | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::error file=tests/integration.sh::$summary"
+            exit "$rc"
+          fi
