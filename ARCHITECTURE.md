@@ -277,15 +277,16 @@ restricting the underlying operation.
 - **Policy drift:** stale host-wide allowlists can remain after an identity is
   removed and may affect another managed identity later.
 - **Fixed-path provenance:** a first installation refuses existing helper
-  paths, while updates require secure project state and recognizable root-owned
-  helper files. Exact content attestation is still needed to distinguish an
-  approved older helper from modified content before replacement.
+  paths. Provisioning records root-only SHA-256 helper digests, and subsequent
+  updates refuse content that has drifted from that manifest. A one-time
+  pre-manifest migration still relies on secure files and management headers.
 - **Stale-account cleanup:** when passwd state is already absent, removal
   validates the metadata shape and exact sudoers content before deleting those
   files. It cannot compare the recorded UID with absent passwd state and does
   not remove a home in this path.
-- **Integrity drift:** ownership and mode checks do not by themselves prove that
-  an installed helper has the expected content.
+- **Integrity drift:** audits compare installed helpers with root-only digests
+  from the last successful provisioning. This detects later drift but cannot
+  protect against trusted root modifying both a helper and its manifest.
 - **Availability:** missing Linux/systemd inspection tools produce errors or
   partial results; there is no alternate control plane.
 
@@ -428,12 +429,11 @@ purpose. They are directions, not claims about current behavior:
 1. Add operation-level wall-clock and total output bounds.
 2. Record bounded request audit events without logging sensitive result data.
 3. Provide stable, structured, versioned output where system tools permit it.
-4. Attest installed dispatcher/helper content during audits.
-5. Support per-identity policy if multiple agents need different scopes.
-6. Review server-side minimization or redaction for each operation separately.
-7. Consider optional short-lived OpenSSH certificates where a CA already
+4. Support per-identity policy if multiple agents need different scopes.
+5. Review server-side minimization or redaction for each operation separately.
+6. Consider optional short-lived OpenSSH certificates where a CA already
    exists; certificates improve credential lifecycle, not command restriction.
-8. Evaluate lightweight execution hardening only when it works on disposable
+7. Evaluate lightweight execution hardening only when it works on disposable
    representative hosts and does not introduce a larger privileged surface.
 
 The protocol must remain diagnostic. Requests to add mutation, arbitrary files,

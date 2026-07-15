@@ -49,7 +49,7 @@ FORMAT="$1"
   exit 64
 }
 
-for required in getent id stat; do
+for required in getent id stat cmp sha256sum; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -67,6 +67,7 @@ ACCOUNTS_DIR="$MANAGED_DIR/accounts"
 SUDOERS_DIR="/etc/sudoers.d"
 STATUS_ALLOWLIST="$MANAGED_DIR/status-allowlist"
 LOG_ALLOWLIST="$MANAGED_DIR/log-allowlist"
+HELPER_DIGESTS="$MANAGED_DIR/.helper-digests"
 DISPATCHER_PATH="/usr/local/sbin/homelab-agent-dispatch"
 ROOT_HELPER_PATH="/usr/local/sbin/homelab-agent-dispatch-root"
 UNIT_PATTERN='[A-Za-z0-9_.@:][A-Za-z0-9_.@:-]*'
@@ -154,7 +155,21 @@ sudoers_state() {
   [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
   expected="$(printf '%s\n%s ALL=(root) NOPASSWD: %s \"\"' \
     '# Managed by homelab-agent-access. Do not edit manually.' "$user" "$ROOT_HELPER_PATH")"
-  if [[ "$(<"$file")" == "$expected" ]]; then
+  if cmp -s <(printf '%s\n' "$expected") "$file"; then
+    printf '%s\n' valid
+  else
+    printf '%s\n' invalid
+  fi
+}
+
+helper_manifest_state() {
+  local state lines=()
+  state="$(secure_file_state "$HELPER_DIGESTS" 400)"
+  [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
+  mapfile -t lines < "$HELPER_DIGESTS"
+  if [[ ${#lines[@]} -eq 3 && "${lines[0]}" == version=1 && \
+        "${lines[1]}" =~ ^dispatcher_sha256=([a-f0-9]{64})$ && \
+        "${lines[2]}" =~ ^root_helper_sha256=([a-f0-9]{64})$ ]]; then
     printf '%s\n' valid
   else
     printf '%s\n' invalid
@@ -162,19 +177,34 @@ sudoers_state() {
 }
 
 helper_state() {
-  local state
-  state="$(secure_file_state "$1" 755)"
-  if [[ "$state" == valid ]]; then
+  local file="$1" expected="$2" state actual _
+  state="$(secure_file_state "$file" 755)"
+  [[ "$state" == valid ]] || { printf '%s\n' "$state"; return; }
+  if [[ "$helper_manifest_state" == missing ]]; then
+    printf '%s\n' unattested
+    return
+  fi
+  [[ "$helper_manifest_state" == valid ]] || { printf '%s\n' invalid; return; }
+  read -r actual _ < <(sha256sum -- "$file")
+  if [[ "$actual" =~ ^[a-f0-9]{64}$ && "$actual" == "$expected" ]]; then
     printf '%s\n' secure
   else
-    printf '%s\n' "$state"
+    printf '%s\n' invalid
   fi
 }
 
 status_allowlist_state="$(allowlist_state "$STATUS_ALLOWLIST")"
 log_allowlist_state="$(allowlist_state "$LOG_ALLOWLIST")"
-dispatcher_state="$(helper_state "$DISPATCHER_PATH")"
-root_helper_state="$(helper_state "$ROOT_HELPER_PATH")"
+helper_manifest_state="$(helper_manifest_state)"
+dispatcher_digest=""
+root_helper_digest=""
+if [[ "$helper_manifest_state" == valid ]]; then
+  mapfile -t helper_digest_lines < "$HELPER_DIGESTS"
+  dispatcher_digest="${helper_digest_lines[1]#dispatcher_sha256=}"
+  root_helper_digest="${helper_digest_lines[2]#root_helper_sha256=}"
+fi
+dispatcher_state="$(helper_state "$DISPATCHER_PATH" "$dispatcher_digest")"
+root_helper_state="$(helper_state "$ROOT_HELPER_PATH" "$root_helper_digest")"
 users=()
 if [[ -d "$ACCOUNTS_DIR" && ! -L "$ACCOUNTS_DIR" ]]; then
   for marker in "$ACCOUNTS_DIR"/*; do
@@ -304,6 +334,7 @@ if [[ "$FORMAT" == json ]]; then
       --arg password_state "$password_state" \
       --arg status_allowlist "$status_allowlist_state" \
       --arg log_allowlist "$log_allowlist_state" \
+      --arg helper_manifest "$helper_manifest_state" \
       --arg dispatcher "$dispatcher_state" \
       --arg root_helper "$root_helper_state" \
       --argjson metadata_version "$metadata_version" \
@@ -312,6 +343,7 @@ if [[ "$FORMAT" == json ]]; then
         home_security: $home_state, password: $password_state,
         authorized_key: $key_state, sudoers: $sudo_state,
         status_allowlist: $status_allowlist, log_allowlist: $log_allowlist,
+        helper_manifest: $helper_manifest,
         dispatcher: $dispatcher, root_helper: $root_helper,
         operations: ["status", "logs", "ports", "hardware"]}]' <<< "$result")"
   done
@@ -330,7 +362,7 @@ if [[ "$FORMAT" == brief ]]; then
     password_state="$(password_state_for_user "$user")"
     key_state="$(managed_key_state "$home")"
     sudo_state="$(sudoers_state "$user")"
-    echo "$user home=$home state=$state metadata_version=$metadata_version metadata=$metadata_state home_security=$home_state password=$password_state key=$key_state sudoers=$sudo_state"
+    echo "$user home=$home state=$state metadata_version=$metadata_version metadata=$metadata_state home_security=$home_state password=$password_state key=$key_state sudoers=$sudo_state helper_manifest=$helper_manifest_state dispatcher=$dispatcher_state root_helper=$root_helper_state"
   done
   [[ ${#users[@]} -gt 0 ]] || echo "No managed accounts found."
   exit 0
@@ -361,6 +393,7 @@ for user in "${users[@]}"; do
   printf '  Password:      %s\n' "$password_state"
   printf '  Managed key:   %s\n' "$key_state"
   printf '  Sudo helper:   %s\n' "$sudo_state"
+  printf '  Helper digest: %s\n' "$helper_manifest_state"
   printf '  Dispatcher:    %s\n' "$dispatcher_state"
   printf '  Root helper:   %s\n' "$root_helper_state"
   printf '  Status list:   %s\n' "$status_allowlist_state"

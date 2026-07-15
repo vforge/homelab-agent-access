@@ -42,8 +42,9 @@ An administrator runs the provisioning scripts once. They install:
 1. A dedicated Unix account with an impossible password hash.
 2. A root-owned SSH forced-command dispatcher.
 3. A root-owned helper reachable only through an exact sudoers rule.
-4. Root-owned per-host status and log unit allowlists.
-5. An authorized key that disables forwarding, X11, PTY allocation, and user
+4. A root-only SHA-256 manifest for detecting helper content drift.
+5. Root-owned per-host status and log unit allowlists.
+6. An authorized key that disables forwarding, X11, PTY allocation, and user
    SSH rc files.
 
 The agent then connects with the dedicated key and can request only these
@@ -67,7 +68,8 @@ There is no intended interactive shell or arbitrary command interface.
 - A privileged SSH login to the target. The provisioning script performs root
   operations directly and does not automatically invoke `sudo`.
 - A Linux target with `bash`, `useradd`, `usermod`, `getent`, `install`, `base64`,
-  `sudo`, and `visudo`; Debian/Ubuntu and Arch-like systems are the targets.
+  `cmp`, `sha256sum`, `sudo`, and `visudo`; Debian/Ubuntu and Arch-like systems
+  are the targets.
 - A public SSH key stored outside this repository.
 - The target administrator's host key already present in `known_hosts`.
 

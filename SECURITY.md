@@ -31,8 +31,9 @@ by the helper.
 
 - Provisioning payloads are encoded before being passed through SSH arguments.
 - Provisioning preflights managed files, refuses unproven fixed helper paths,
-  validates existing managed file ownership, modes, formats, and sudoers content,
-  installs replacements atomically, and rolls them back on failure.
+  validates existing managed file ownership, modes, formats, helper SHA-256
+  digests, and sudoers content, installs replacements atomically, and rolls them
+  back on failure.
 - Usernames, public keys, allowlist unit names, request unit names, and log
   limits are validated.
 - Root-owned per-host status and log allowlists are checked by the root helper.
@@ -50,6 +51,9 @@ by the helper.
 - The only sudo permission is an exact no-argument root helper.
 - The root helper uses fixed absolute command paths and does not evaluate shell
   input.
+- Provisioning records root-only SHA-256 digests for the installed dispatcher
+  and privileged helper. Updates and `bin/list` compare helper content with that
+  manifest.
 
 ## Remaining limitations
 
@@ -65,11 +69,10 @@ by the helper.
   paths or host-level SSH configuration can weaken the design.
 - Status and log allowlists are currently host-wide, not per identity; multiple
   managed agents on one host therefore share those policy scopes.
-- Installed helper ownership and mode are audited, but those checks do not yet
-  attest that helper content matches the expected templates. Update preflight
-  recognizes existing helpers by root ownership, mode, the project state
-  directory, and their management header; cryptographic content attestation is
-  still pending.
+- Helper digest attestation detects drift from the last successful
+  provisioning; it is not protection from trusted root, which can modify both
+  files and digests. A one-time migration without a manifest recognizes secure
+  helpers by their management header before replacing and attesting them.
 - If an account is already absent, stale-state removal validates the metadata
   shape and exact sudoers content before deleting those two files. It cannot
   compare the recorded UID with absent passwd state and deliberately does not
@@ -101,7 +104,8 @@ Before deployment or release:
 - Confirm the dedicated key cannot forward, open a PTY, or run arbitrary shell
   commands.
 - Inspect and validate every sudoers rule with `visudo`.
-- Confirm `bin/list` reports valid metadata, key, sudoers, and allowlist states.
+- Confirm `bin/list` reports valid metadata, key, sudoers, allowlist, helper
+  manifest, and helper-content states.
 - Confirm only the managed authorized key is present.
 - Confirm helper files, allowlists, and their parent directories are root-owned
   and not writable by the agent.

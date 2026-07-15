@@ -7,6 +7,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_USER="haa_test_$$"
+NAMESPACE_USER="helper-digests"
 TMP_BASE="${RUNNER_TEMP:-/tmp}"
 WORK_DIR=""
 ADMIN_AUTH_DIR="/run/homelab-agent-access-integration-$$"
@@ -25,13 +26,15 @@ cleanup() {
   fi
 
   if [[ "$SYSTEM_CLEANUP" == true ]]; then
-    if id "$TEST_USER" >/dev/null 2>&1; then
-      sudo userdel --remove "$TEST_USER" >/dev/null 2>&1 || true
-    fi
-    sudo rm -rf --one-file-system -- "/home/$TEST_USER"
-    sudo rm -f "/etc/sudoers.d/homelab-agent-$TEST_USER"
-    sudo rm -f "/etc/homelab-agent-access/accounts/$TEST_USER"
-    sudo rm -f "/etc/homelab-agent-access/$TEST_USER"
+    for cleanup_user in "$TEST_USER" "$NAMESPACE_USER"; do
+      if id "$cleanup_user" >/dev/null 2>&1; then
+        sudo userdel --remove "$cleanup_user" >/dev/null 2>&1 || true
+      fi
+      sudo rm -rf --one-file-system -- "/home/$cleanup_user"
+      sudo rm -f "/etc/sudoers.d/homelab-agent-$cleanup_user"
+      sudo rm -f "/etc/homelab-agent-access/accounts/$cleanup_user"
+      sudo rm -f "/etc/homelab-agent-access/$cleanup_user"
+    done
     sudo rm -f /usr/local/sbin/homelab-agent-dispatch
     sudo rm -f /usr/local/sbin/homelab-agent-dispatch-root
     sudo rm -rf /etc/homelab-agent-access
@@ -73,16 +76,20 @@ for path in \
   /etc/homelab-agent-access \
   /usr/local/sbin/homelab-agent-dispatch \
   /usr/local/sbin/homelab-agent-dispatch-root \
-  "/etc/sudoers.d/homelab-agent-$TEST_USER"; do
+  "/etc/sudoers.d/homelab-agent-$TEST_USER" \
+  "/etc/sudoers.d/homelab-agent-$NAMESPACE_USER"; do
   if sudo test -e "$path" || sudo test -L "$path"; then
     echo "refusing integration test: managed path already exists: $path" >&2
     exit 73
   fi
 done
-if id "$TEST_USER" >/dev/null 2>&1; then
-  echo "refusing integration test: account already exists: $TEST_USER" >&2
-  exit 73
-fi
+for test_account in "$TEST_USER" "$NAMESPACE_USER"; do
+  if id "$test_account" >/dev/null 2>&1 || sudo test -e "/home/$test_account" || \
+     sudo test -L "/home/$test_account"; then
+    echo "refusing integration test: account or home already exists: $test_account" >&2
+    exit 73
+  fi
+done
 SYSTEM_CLEANUP=true
 
 mkdir -p "$TMP_BASE"
@@ -133,7 +140,7 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM no
 LogLevel ERROR
-AllowUsers root $TEST_USER
+AllowUsers root $TEST_USER $NAMESPACE_USER
 
 Match User root
   AuthorizedKeysFile $ADMIN_AUTH_KEYS
@@ -238,6 +245,28 @@ sudo rm -rf --one-file-system -- "/home/$TEST_USER"
   --status-allowlist "$STATUS_ALLOWLIST" \
   --log-allowlist "$LOG_ALLOWLIST"
 
+# A pre-attestation installation with recognizable secure helpers can migrate
+# once; the update must recreate the digest manifest.
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  rm /etc/homelab-agent-access/.helper-digests
+"$ROOT_DIR/bin/list" root@admin-target --json | \
+  jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
+    .helper_manifest == "missing" and .dispatcher == "unattested" and
+    .root_helper == "unattested")' >/dev/null
+"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY.pub" --user "$TEST_USER" \
+  --status-allowlist "$STATUS_ALLOWLIST" \
+  --log-allowlist "$LOG_ALLOWLIST"
+
+# The hidden manifest namespace must not collide with a valid account name.
+"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY.pub" --user "$NAMESPACE_USER" \
+  --status-allowlist "$STATUS_ALLOWLIST" \
+  --log-allowlist "$LOG_ALLOWLIST"
+"$ROOT_DIR/bin/list" root@admin-target --json | \
+  jq -e --arg user "$NAMESPACE_USER" '.[] | select(.user == $user and
+    .helper_manifest == "valid" and .dispatcher == "secure" and
+    .root_helper == "secure")' >/dev/null
+"$ROOT_DIR/bin/remove" root@admin-target "$NAMESPACE_USER"
+
 ssh -o BatchMode=yes -o RequestTTY=no agent-target ports >/dev/null
 ssh -o BatchMode=yes -o RequestTTY=no agent-target hardware >/dev/null
 expect_agent_rc 77 'status unlisted.service'
@@ -279,7 +308,8 @@ ssh -o BatchMode=yes -o RequestTTY=no admin-target \
     .home_security == "secure" and .password == "disabled" and
     .authorized_key == "valid" and .sudoers == "valid" and
     .status_allowlist == "valid" and .log_allowlist == "valid" and
-    .dispatcher == "secure" and .root_helper == "secure")' >/dev/null
+    .helper_manifest == "valid" and .dispatcher == "secure" and
+    .root_helper == "secure")' >/dev/null
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \
   chmod 444 /etc/homelab-agent-access/status-allowlist
 "$ROOT_DIR/bin/list" root@admin-target --json | \
@@ -288,6 +318,46 @@ ssh -o BatchMode=yes -o RequestTTY=no admin-target \
 expect_agent_rc 69 'status ssh.service'
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \
   chmod 400 /etc/homelab-agent-access/status-allowlist
+
+# Audits and updates must reject helper content that no longer matches the
+# root-owned digest manifest.
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "printf '%s\\n' '# unexpected drift' >> /usr/local/sbin/homelab-agent-dispatch-root"
+"$ROOT_DIR/bin/list" root@admin-target --json | \
+  jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
+    .helper_manifest == "valid" and .root_helper == "invalid")' >/dev/null
+set +e
+"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY_2.pub" --user "$TEST_USER" \
+  --status-allowlist "$CHANGED_ALLOWLIST" \
+  --log-allowlist "$CHANGED_ALLOWLIST" \
+  > "$WORK_DIR/attestation.stdout" 2> "$WORK_DIR/attestation.stderr"
+attestation_rc=$?
+set -e
+[[ "$attestation_rc" -eq 73 ]]
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "grep -qx '# unexpected drift' /usr/local/sbin/homelab-agent-dispatch-root && grep -qx 'ssh.service' /etc/homelab-agent-access/status-allowlist"
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "sed -i '\$d' /usr/local/sbin/homelab-agent-dispatch-root"
+"$ROOT_DIR/bin/list" root@admin-target --json | \
+  jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
+    .helper_manifest == "valid" and .root_helper == "secure")' >/dev/null
+
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "printf '%s\\n' 'unexpected=true' >> /etc/homelab-agent-access/.helper-digests"
+"$ROOT_DIR/bin/list" root@admin-target --json | \
+  jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
+    .helper_manifest == "invalid" and .dispatcher == "invalid" and
+    .root_helper == "invalid")' >/dev/null
+set +e
+"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY_2.pub" --user "$TEST_USER" \
+  --status-allowlist "$CHANGED_ALLOWLIST" \
+  --log-allowlist "$CHANGED_ALLOWLIST" \
+  > "$WORK_DIR/manifest.stdout" 2> "$WORK_DIR/manifest.stderr"
+manifest_rc=$?
+set -e
+[[ "$manifest_rc" -eq 73 ]]
+ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "sed -i '\$d' /etc/homelab-agent-access/.helper-digests"
 
 # A preflight failure must not replace shared allowlists or other artifacts.
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \

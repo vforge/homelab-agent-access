@@ -10,6 +10,8 @@ All notable changes to this project are documented here.
 - Refuse unproven fixed helper replacements and pre-existing homes for new
   accounts, and validate stale account metadata and sudoers content before
   cleanup.
+- Record root-only SHA-256 helper digests, report content drift during audits,
+  and reject it during updates.
 - Add disposable-host integration tests.
 - Add per-host service and log allowlists.
 - Bind managed accounts to recorded UID and canonical home metadata.

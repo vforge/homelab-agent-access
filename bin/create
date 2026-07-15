@@ -205,7 +205,7 @@ if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root
   exit 64
 fi
 
-for required in id getent useradd usermod userdel install mktemp base64 sudo visudo stat cmp cp mv rm rmdir chown chmod wc tr; do
+for required in id getent useradd usermod userdel install mktemp base64 sudo visudo stat cmp cp mv rm rmdir chown chmod wc tr sha256sum; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -223,6 +223,7 @@ STATUS_ALLOWLIST_TMP="$(mktemp)"
 LOG_ALLOWLIST_TMP="$(mktemp)"
 AUTH_TMP="$(mktemp)"
 SUDOERS_TMP="$(mktemp)"
+HELPER_DIGESTS_TMP="$(mktemp)"
 MARKER_TMP=""
 BACKUP_DIR=""
 NEW_ACCOUNT=false
@@ -270,7 +271,8 @@ cleanup() {
     fi
   fi
   rm -f "$DISPATCHER_TMP" "$ROOT_HELPER_TMP" "$STATUS_ALLOWLIST_TMP" \
-    "$LOG_ALLOWLIST_TMP" "$AUTH_TMP" "$SUDOERS_TMP" "$MARKER_TMP"
+    "$LOG_ALLOWLIST_TMP" "$AUTH_TMP" "$SUDOERS_TMP" "$HELPER_DIGESTS_TMP" \
+    "$MARKER_TMP"
   [[ -n "$BACKUP_DIR" ]] && rm -rf "$BACKUP_DIR"
   return "$rc"
 }
@@ -309,6 +311,21 @@ validate_allowlist "$STATUS_ALLOWLIST_TMP"
 validate_allowlist "$LOG_ALLOWLIST_TMP"
 chmod 755 "$DISPATCHER_TMP" "$ROOT_HELPER_TMP"
 
+sha256_of() {
+  local digest _
+  read -r digest _ < <(sha256sum -- "$1")
+  [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || {
+    echo "failed to calculate helper digest" >&2
+    exit 69
+  }
+  printf '%s\n' "$digest"
+}
+DISPATCHER_SHA256="$(sha256_of "$DISPATCHER_TMP")"
+ROOT_HELPER_SHA256="$(sha256_of "$ROOT_HELPER_TMP")"
+printf 'version=1\ndispatcher_sha256=%s\nroot_helper_sha256=%s\n' \
+  "$DISPATCHER_SHA256" "$ROOT_HELPER_SHA256" > "$HELPER_DIGESTS_TMP"
+chmod 400 "$HELPER_DIGESTS_TMP"
+
 MANAGED_DIR="/etc/homelab-agent-access"
 ACCOUNTS_DIR="$MANAGED_DIR/accounts"
 MARKER="$ACCOUNTS_DIR/$READONLY_USER"
@@ -318,6 +335,7 @@ DISPATCHER_PATH="/usr/local/sbin/homelab-agent-dispatch"
 ROOT_HELPER_PATH="/usr/local/sbin/homelab-agent-dispatch-root"
 STATUS_ALLOWLIST_PATH="$MANAGED_DIR/status-allowlist"
 LOG_ALLOWLIST_PATH="$MANAGED_DIR/log-allowlist"
+HELPER_DIGESTS_PATH="$MANAGED_DIR/.helper-digests"
 SUDOERS_FILE="/etc/sudoers.d/homelab-agent-$READONLY_USER"
 MANAGED_BEGIN="# BEGIN homelab-agent-access managed key"
 MANAGED_END="# END homelab-agent-access managed key"
@@ -530,10 +548,54 @@ validate_existing_allowlist() {
   validate_allowlist "$file"
 }
 
-validate_helper_provenance "$DISPATCHER_PATH" \
-  '# This file is installed root-owned and used as an SSH authorized-key forced command.'
-validate_helper_provenance "$ROOT_HELPER_PATH" \
-  '# This file is installed root-owned and is the only privileged operation'
+validate_helper_attestation() {
+  local lines=() dispatcher_digest root_helper_digest actual
+  secure_existing_file "$HELPER_DIGESTS_PATH" 400
+  mapfile -t lines < "$HELPER_DIGESTS_PATH"
+  if [[ ${#lines[@]} -ne 3 || "${lines[0]}" != version=1 || \
+        ! "${lines[1]}" =~ ^dispatcher_sha256=([a-f0-9]{64})$ ]]; then
+    echo "invalid helper digest manifest: $HELPER_DIGESTS_PATH" >&2
+    exit 73
+  fi
+  dispatcher_digest="${BASH_REMATCH[1]}"
+  if [[ ! "${lines[2]}" =~ ^root_helper_sha256=([a-f0-9]{64})$ ]]; then
+    echo "invalid helper digest manifest: $HELPER_DIGESTS_PATH" >&2
+    exit 73
+  fi
+  root_helper_digest="${BASH_REMATCH[1]}"
+
+  secure_existing_file "$DISPATCHER_PATH" 755
+  secure_existing_file "$ROOT_HELPER_PATH" 755
+  actual="$(sha256_of "$DISPATCHER_PATH")"
+  [[ "$actual" == "$dispatcher_digest" ]] || {
+    echo "installed dispatcher does not match its managed digest" >&2
+    exit 73
+  }
+  actual="$(sha256_of "$ROOT_HELPER_PATH")"
+  [[ "$actual" == "$root_helper_digest" ]] || {
+    echo "installed root helper does not match its managed digest" >&2
+    exit 73
+  }
+}
+
+if [[ -e "$HELPER_DIGESTS_PATH" || -L "$HELPER_DIGESTS_PATH" ]]; then
+  validate_helper_attestation
+else
+  # One-time migration for installations created before helper digests were
+  # recorded. Both recognizable secure helpers are required and are replaced
+  # and attested atomically.
+  if [[ "$MANAGED_DIR_WAS_PRESENT" == true ]] && {
+    [[ ! -e "$DISPATCHER_PATH" || -L "$DISPATCHER_PATH" || \
+       ! -e "$ROOT_HELPER_PATH" || -L "$ROOT_HELPER_PATH" ]];
+  }; then
+    echo "refusing incomplete pre-attestation helper state" >&2
+    exit 73
+  fi
+  validate_helper_provenance "$DISPATCHER_PATH" \
+    '# This file is installed root-owned and used as an SSH authorized-key forced command.'
+  validate_helper_provenance "$ROOT_HELPER_PATH" \
+    '# This file is installed root-owned and is the only privileged operation'
+fi
 validate_existing_allowlist "$STATUS_ALLOWLIST_PATH"
 validate_existing_allowlist "$LOG_ALLOWLIST_PATH"
 if [[ -e "$SUDOERS_FILE" || -L "$SUDOERS_FILE" ]]; then
@@ -601,6 +663,7 @@ backup_target "$DISPATCHER_PATH" dispatcher
 backup_target "$ROOT_HELPER_PATH" root-helper
 backup_target "$STATUS_ALLOWLIST_PATH" status-allowlist
 backup_target "$LOG_ALLOWLIST_PATH" log-allowlist
+backup_target "$HELPER_DIGESTS_PATH" helper-digests
 backup_target "$AUTH_KEYS" authorized-keys
 backup_target "$SUDOERS_FILE" sudoers
 backup_target "$MARKER" marker
@@ -627,6 +690,7 @@ atomic_install "$DISPATCHER_TMP" "$DISPATCHER_PATH" 755
 atomic_install "$ROOT_HELPER_TMP" "$ROOT_HELPER_PATH" 755
 atomic_install "$STATUS_ALLOWLIST_TMP" "$STATUS_ALLOWLIST_PATH" 400
 atomic_install "$LOG_ALLOWLIST_TMP" "$LOG_ALLOWLIST_PATH" 400
+atomic_install "$HELPER_DIGESTS_TMP" "$HELPER_DIGESTS_PATH" 400
 atomic_install "$AUTH_TMP" "$AUTH_KEYS" 444
 atomic_install "$SUDOERS_TMP" "$SUDOERS_FILE" 440
 atomic_install "$MARKER_TMP" "$MARKER" 400

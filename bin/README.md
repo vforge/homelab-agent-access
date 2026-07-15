@@ -45,10 +45,11 @@ The target account is recorded under `/etc/homelab-agent-access/accounts/`
 with its username, UID, and canonical `/home/USER` path. Existing accounts are
 refused unless that metadata matches passwd state, and a new account is refused
 if its expected home already exists. A first installation refuses pre-existing
-fixed helper paths. Updates require secure project state,
-recognizable root-owned helpers, valid existing allowlists, and exact managed
-sudoers/metadata content before replacement. The command uses same-directory
-atomic file replacements and restores prior files if installation fails.
+fixed helper paths. Provisioning records root-only SHA-256 digests for both
+helpers. Updates require those helpers to match their recorded digests, plus
+valid existing allowlists and exact managed sudoers/metadata content, before
+replacement. The command uses same-directory atomic file replacements and
+restores prior files if installation fails.
 Re-running the command rotates the managed key and updates the helper files.
 
 ## Audit
@@ -61,11 +62,11 @@ Re-running the command rotates the managed key and updates the helper files.
 
 `--json` requires `jq` on the target. The audit validates account metadata,
 home ownership/mode, password disabling, the managed authorized-key block, exact
-sudoers content, allowlist syntax, and expected root ownership/modes. States
-are `valid`, `missing`, `invalid`, `unsafe`, `legacy`, or `stale` as applicable.
-Dispatcher fields report `secure`
-when ownership and mode are correct; they do not attest template content. The
-audit does not print allowlist contents.
+sudoers content, allowlist syntax, expected root ownership/modes, the helper
+digest manifest, and installed helper SHA-256 values. States include `valid`,
+`missing`, `invalid`, `unsafe`, `legacy`, `stale`, and `unattested` as
+applicable. Dispatcher fields report `secure` only when ownership, mode, and the
+recorded digest match. The audit does not print allowlist contents.
 
 ## Remove
 
@@ -111,7 +112,8 @@ remaining readable to sshd's unprivileged account lookup.
 The target must provide:
 
 - OpenSSH 7.2 or newer for the authorized-key `restrict` option.
-- Bash, `useradd`, `usermod`, `getent`, `install`, and `base64`.
+- Bash, `useradd`, `usermod`, `getent`, `install`, `base64`, `cmp`, and
+  `sha256sum`.
 - `sudo` at `/usr/bin/sudo` and `visudo`.
 - A privileged SSH login for provisioning.
 
@@ -125,7 +127,10 @@ Accounts created by older versions that lack a versioned management marker are
 intentionally refused. Version-2 accounts with the standard `/home/USER` path
 can be migrated by rerunning `create` with reviewed status and log allowlists;
 nonstandard homes require manual review. `remove` refuses legacy metadata until
-that migration is complete.
+that migration is complete. An installation created before helper digests were
+introduced can migrate once when both helpers have secure ownership/modes and
+recognized management headers; provisioning then replaces them and records the
+new exact digests.
 
 The forced command is a narrow interface, but it is not a complete OS sandbox.
 Logs may expose secrets, and a compromised agent key can query all operations
