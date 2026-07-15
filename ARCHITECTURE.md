@@ -64,9 +64,9 @@ The agent:
 
 1. Uses only its dedicated key.
 2. Sends one documented diagnostic request per SSH connection.
-3. Receives diagnostic output; log line counts and selected arguments are
-   bounded, while general wall-clock and total-output bounds remain future
-   work.
+3. Receives diagnostic output with a 15-second hard command bound (termination
+   begins after 14 seconds) and a 512 KiB cap on each captured command stream;
+   log line counts and selected arguments are also bounded.
 4. Treats all returned host data, especially logs, as sensitive and untrusted.
 5. Returns only the minimum evidence required by the user and redacts sensitive
    values.
@@ -134,7 +134,7 @@ Diagnostic plane
           +-- checks root-owned allowlists
           +-- maps the request to fixed absolute commands
           v
-  diagnostic stdout/stderr; log line count bounded
+  bounded diagnostic stdout/stderr; fixed deadline and response caps
 ```
 
 ### Why SSH
@@ -232,7 +232,9 @@ security review changes the architecture:
 6. The privileged helper independently validates the complete request.
 7. Service access fails closed when an allowlist is absent, unsafe, malformed,
    oversized, or does not contain the exact unit.
-8. Fixed diagnostic commands use absolute paths and bounded arguments.
+8. Fixed diagnostic commands use absolute paths and bounded arguments. Their
+   execution has a fixed wall-clock deadline, and returned stdout/stderr have
+   fixed size caps.
 9. An existing version-3 account is updated only when its management metadata
    matches its nonzero UID and canonical home in passwd state. The supported
    version-2 migration separately validates a nonzero UID and canonical home
@@ -272,8 +274,11 @@ restricting the underlying operation.
   access paths, or sudo rules can weaken the intended boundary.
 - **Privileged helper defect:** parsing, command construction, path, or
   environment mistakes execute in a root context.
-- **Resource exhaustion:** the current helper has operation-specific bounds but
-  no general CPU, memory, wall-clock, output-size, or egress sandbox.
+- **Resource exhaustion:** diagnostic commands begin termination after 14
+  seconds and are forcibly killed one second later; they also have per-stream
+  response caps and bounded temporary capture files. There is still
+  no general CPU, memory, concurrency, or network-egress sandbox, and timeout
+  cannot contain a process that deliberately escapes its command process group.
 - **Policy drift:** stale host-wide allowlists can remain after an identity is
   removed and may affect another managed identity later.
 - **Fixed-path provenance:** a first installation refuses existing helper
@@ -426,14 +431,13 @@ protocol small is a feature, not a temporary limitation.
 The following improvements fit the selected architecture without changing its
 purpose. They are directions, not claims about current behavior:
 
-1. Add operation-level wall-clock and total output bounds.
-2. Record bounded request audit events without logging sensitive result data.
-3. Provide stable, structured, versioned output where system tools permit it.
-4. Support per-identity policy if multiple agents need different scopes.
-5. Review server-side minimization or redaction for each operation separately.
-6. Consider optional short-lived OpenSSH certificates where a CA already
+1. Record bounded request audit events without logging sensitive result data.
+2. Provide stable, structured, versioned output where system tools permit it.
+3. Support per-identity policy if multiple agents need different scopes.
+4. Review server-side minimization or redaction for each operation separately.
+5. Consider optional short-lived OpenSSH certificates where a CA already
    exists; certificates improve credential lifecycle, not command restriction.
-7. Evaluate lightweight execution hardening only when it works on disposable
+6. Evaluate lightweight execution hardening only when it works on disposable
    representative hosts and does not introduce a larger privileged surface.
 
 The protocol must remain diagnostic. Requests to add mutation, arbitrary files,

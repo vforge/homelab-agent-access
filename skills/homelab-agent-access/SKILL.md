@@ -94,6 +94,21 @@ ssh -o BatchMode=yes -o RequestTTY=no agent@server 'hardware'
 Missing tools produce partial output or an error. Do not install software or
 change host configuration as part of an inspection request.
 
+## Response bounds
+
+Every diagnostic command begins termination after 14 seconds and is forcibly
+killed one second later if needed. Captured stdout and stderr are each limited
+to 512 KiB and are returned after the command finishes.
+
+- Exit status 124 means the command timed out; this takes precedence if output
+  was also truncated.
+- Exit status 75 means at least one output stream was truncated without a
+  timeout.
+
+Either failure can include partial output. Do not present it as a complete
+result or automatically retry in a loop; report the limit to the user and ask
+for a narrower supported request when applicable.
+
 ## What is not allowed
 
 Do not:

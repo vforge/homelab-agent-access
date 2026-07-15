@@ -51,6 +51,11 @@ by the helper.
 - The only sudo permission is an exact no-argument root helper.
 - The root helper uses fixed absolute command paths and does not evaluate shell
   input.
+- Each diagnostic command begins termination after 14 seconds and is forcibly
+  killed one second later if needed. Captured command stdout and stderr are each
+  capped at 512 KiB; a fixed helper error notice may follow. Truncation alone
+  fails with status 75, while timeout takes precedence with status 124, so
+  partial results are not reported as successful.
 - Provisioning records root-only SHA-256 digests for the installed dispatcher
   and privileged helper. Updates and `bin/list` compare helper content with that
   manifest.
@@ -63,8 +68,9 @@ by the helper.
 - Hardware output may reveal inventory and serial-adjacent information.
 - The implementation is Linux-oriented and assumes GNU user-management tools.
 - The root helper still runs with the host's normal root privileges.
-- No resource, time, output-size, or network-egress sandbox is applied around
-  the helper commands.
+- The command deadline and response caps are not a general sandbox. No CPU,
+  memory, concurrency, or network-egress limit is applied, and timeout cannot
+  contain a process that deliberately escapes its command process group.
 - The account should have only the managed authorized key. Additional access
   paths or host-level SSH configuration can weaken the design.
 - Status and log allowlists are currently host-wide, not per identity; multiple

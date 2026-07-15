@@ -190,6 +190,117 @@ chmod 755 "$WORK_DIR/bin/ssh"
 PATH="$WORK_DIR/bin:$PATH"
 export PATH
 
+# Exercise response and wall-clock bounds with a disposable helper copy and a
+# fixed fake socket-inspection command. No system command is replaced.
+FAKE_SS="$WORK_DIR/fake-ss"
+BOUNDED_HELPER="$WORK_DIR/bounded-helper"
+cat > "$FAKE_SS" <<'FAKE_OUTPUT'
+#!/bin/bash
+/usr/bin/python3 - <<'PY'
+import sys
+sys.stdout.write("o" * 600000)
+sys.stderr.write("e" * 600000)
+PY
+FAKE_OUTPUT
+chmod 755 "$FAKE_SS"
+sed -e "s#/usr/bin/ss#$FAKE_SS#g" \
+  -e "s#/bin/ss#$FAKE_SS#g" \
+  "$ROOT_DIR/remote/homelab-agent-dispatch-root" > "$BOUNDED_HELPER"
+chmod 755 "$BOUNDED_HELPER"
+set +e
+printf '%s\n' ports | bash "$BOUNDED_HELPER" \
+  > "$WORK_DIR/bounded.stdout" 2> "$WORK_DIR/bounded.stderr"
+bounded_rc=$?
+set -e
+[[ "$bounded_rc" -eq 75 ]]
+/usr/bin/python3 - "$WORK_DIR/bounded.stdout" "$WORK_DIR/bounded.stderr" <<'PY'
+from pathlib import Path
+import sys
+stdout = Path(sys.argv[1]).read_bytes()
+stderr = Path(sys.argv[2]).read_bytes()
+assert stdout == b"o" * 524288
+assert stderr == (
+    b"e" * 524288
+    + b"Diagnostic output exceeded the 512 KiB per-stream limit\n"
+)
+PY
+
+# The capture-file ulimit must stop output well before an unbounded producer can
+# fill the filesystem; the returned stream remains capped. A SIGXFSZ handler
+# records that the producer hit the kernel limit, so this does not merely test
+# response truncation.
+export HAA_FILE_LIMIT_MARKER="$WORK_DIR/file-limit.marker"
+cat > "$FAKE_SS" <<'FAKE_FILE_LIMIT'
+#!/bin/bash
+/usr/bin/python3 - <<'PY'
+import os
+from pathlib import Path
+import signal
+
+marker = Path(os.environ["HAA_FILE_LIMIT_MARKER"])
+
+def limited(_signum, _frame):
+    marker.write_text("SIGXFSZ\n", encoding="ascii")
+    os._exit(99)
+
+signal.signal(signal.SIGXFSZ, limited)
+chunk = b"x" * 65536
+written = 0
+while written < 3000000:
+    written += os.write(1, chunk)
+PY
+FAKE_FILE_LIMIT
+chmod 755 "$FAKE_SS"
+set +e
+printf '%s\n' ports | bash "$BOUNDED_HELPER" \
+  > "$WORK_DIR/file-limit.stdout" 2> "$WORK_DIR/file-limit.stderr"
+file_limit_rc=$?
+set -e
+[[ "$file_limit_rc" -eq 75 ]]
+[[ "$(wc -c < "$WORK_DIR/file-limit.stdout")" -eq 524288 ]]
+grep -qx SIGXFSZ "$HAA_FILE_LIMIT_MARKER"
+unset HAA_FILE_LIMIT_MARKER
+
+# A TERM-ignoring command and child must be killed within the hard limit.
+# Timeout takes precedence when its already-produced output is also truncated.
+export HAA_TIMEOUT_PID_FILE="$WORK_DIR/timeout-child.pid"
+cat > "$FAKE_SS" <<'FAKE_TIMEOUT'
+#!/bin/bash
+/usr/bin/python3 - <<'PY'
+import sys
+sys.stdout.write("t" * 600000)
+PY
+trap '' TERM
+sleep 30 &
+printf '%s\n' "$!" > "${HAA_TIMEOUT_PID_FILE:?}"
+wait
+FAKE_TIMEOUT
+chmod 755 "$FAKE_SS"
+sed -e "s#/usr/bin/ss#$FAKE_SS#g" \
+  -e "s#/bin/ss#$FAKE_SS#g" \
+  -e 's/COMMAND_TERM_SECONDS=14/COMMAND_TERM_SECONDS=1/' \
+  -e 's/COMMAND_MAX_SECONDS=15/COMMAND_MAX_SECONDS=2/' \
+  "$ROOT_DIR/remote/homelab-agent-dispatch-root" > "$BOUNDED_HELPER"
+chmod 755 "$BOUNDED_HELPER"
+timeout_started=$SECONDS
+set +e
+printf '%s\n' ports | bash "$BOUNDED_HELPER" \
+  > "$WORK_DIR/timeout.stdout" 2> "$WORK_DIR/timeout.stderr"
+timeout_rc=$?
+set -e
+timeout_elapsed=$((SECONDS - timeout_started))
+[[ "$timeout_rc" -eq 124 ]]
+(( timeout_elapsed >= 1 && timeout_elapsed <= 4 ))
+grep -q 'output also exceeded' "$WORK_DIR/timeout.stderr"
+grep -q '2-second hard limit' "$WORK_DIR/timeout.stderr"
+timeout_child="$(<"$HAA_TIMEOUT_PID_FILE")"
+if kill -0 "$timeout_child" 2>/dev/null; then
+  kill -KILL "$timeout_child" 2>/dev/null || true
+  echo 'timeout left a descendant process running' >&2
+  exit 1
+fi
+unset HAA_TIMEOUT_PID_FILE
+
 expect_agent_rc() {
   local expected="$1" request="$2" rc
   set +e
@@ -269,6 +380,12 @@ ssh -o BatchMode=yes -o RequestTTY=no admin-target \
 
 ssh -o BatchMode=yes -o RequestTTY=no agent-target ports >/dev/null
 ssh -o BatchMode=yes -o RequestTTY=no agent-target hardware >/dev/null
+if ssh -o BatchMode=yes -o RequestTTY=no admin-target \
+  "sudo -u $TEST_USER sudo -n /usr/local/sbin/homelab-agent-dispatch-root --internal-hardware" \
+  >/dev/null 2>&1; then
+  echo 'sudoers accepted a private helper argument' >&2
+  exit 1
+fi
 expect_agent_rc 77 'status unlisted.service'
 expect_agent_rc 77 'logs unlisted.service 1'
 expect_agent_rc 64 'status --bad'

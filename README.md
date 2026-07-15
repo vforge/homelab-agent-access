@@ -58,7 +58,9 @@ hardware
 ```
 
 The remote helper validates the request and runs fixed, read-oriented commands.
-There is no intended interactive shell or arbitrary command interface.
+Each command has a 15-second hard execution bound (termination begins after 14
+seconds), and captured stdout and stderr are each limited to 512 KiB. There is
+no intended interactive shell or arbitrary command interface.
 
 ## Quick start
 
@@ -68,8 +70,8 @@ There is no intended interactive shell or arbitrary command interface.
 - A privileged SSH login to the target. The provisioning script performs root
   operations directly and does not automatically invoke `sudo`.
 - A Linux target with `bash`, `useradd`, `usermod`, `getent`, `install`, `base64`,
-  `cmp`, `sha256sum`, `sudo`, and `visudo`; Debian/Ubuntu and Arch-like systems
-  are the targets.
+  `cmp`, `head`, `timeout`, `sha256sum`, `sudo`, and `visudo`; Debian/Ubuntu and
+  Arch-like systems are the targets.
 - A public SSH key stored outside this repository.
 - The target administrator's host key already present in `known_hosts`.
 
@@ -126,7 +128,9 @@ or complete sandbox. In particular:
   but those lists must be reviewed and maintained by the administrator.
 - Logs and hardware output may contain sensitive data.
 - The helper depends on the target's systemd, journal, socket, and hardware
-  tools being available.
+  tools being available. Diagnostic commands begin termination after 14 seconds
+  and are forcibly killed one second later; captured stdout and stderr are each
+  capped at 512 KiB.
 - The implementation is Linux-oriented and assumes GNU user-management tools.
 - A compromised dedicated key can still query everything exposed by the helper.
 - The account and key should be used only for the intended homelab scope.

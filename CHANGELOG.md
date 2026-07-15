@@ -12,6 +12,8 @@ All notable changes to this project are documented here.
   cleanup.
 - Record root-only SHA-256 helper digests, report content drift during audits,
   and reject it during updates.
+- Hard-bound diagnostic command execution to 15 seconds and cap captured stdout
+  and stderr at 512 KiB each.
 - Add disposable-host integration tests.
 - Add per-host service and log allowlists.
 - Bind managed accounts to recorded UID and canonical home metadata.

@@ -205,7 +205,7 @@ if [[ ! "$READONLY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ || "$READONLY_USER" == root
   exit 64
 fi
 
-for required in id getent useradd usermod userdel install mktemp base64 sudo visudo stat cmp cp mv rm rmdir chown chmod wc tr sha256sum; do
+for required in id getent useradd usermod userdel install mktemp base64 sudo visudo stat cmp cp mv rm rmdir chown chmod wc tr head timeout sha256sum; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "required remote command is missing: $required" >&2
     exit 69
@@ -215,6 +215,12 @@ done
   echo "expected sudo path is missing: /usr/bin/sudo" >&2
   exit 69
 }
+for runtime_tool in timeout mktemp head rm stat; do
+  if [[ ! -x "/usr/bin/$runtime_tool" && ! -x "/bin/$runtime_tool" ]]; then
+    echo "required bounded-runtime command is missing: $runtime_tool" >&2
+    exit 69
+  fi
+done
 
 PUBLIC_KEY="$(printf '%s' "$PUBLIC_KEY_B64" | base64 -d)"
 DISPATCHER_TMP="$(mktemp)"

@@ -16,6 +16,166 @@ usage() {
   exit 64
 }
 
+COMMAND_TERM_SECONDS=14
+COMMAND_KILL_GRACE_SECONDS=1
+COMMAND_MAX_SECONDS=15
+MAX_STREAM_BYTES=524288
+CAPTURE_FILE_BLOCKS=2048
+BOUND_STDOUT=""
+BOUND_STDERR=""
+BOUND_RM_BIN=""
+
+runtime_tool() {
+  local candidate
+  case "$1" in
+    timeout) set -- /usr/bin/timeout /bin/timeout ;;
+    mktemp) set -- /usr/bin/mktemp /bin/mktemp ;;
+    head) set -- /usr/bin/head /bin/head ;;
+    rm) set -- /usr/bin/rm /bin/rm ;;
+    stat) set -- /usr/bin/stat /bin/stat ;;
+    *) return 1 ;;
+  esac
+  for candidate in "$@"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# shellcheck disable=SC2329 # Invoked by the EXIT trap below.
+cleanup_bounded_files() {
+  if [[ -n "$BOUND_RM_BIN" ]]; then
+    [[ -n "$BOUND_STDOUT" ]] && "$BOUND_RM_BIN" -f -- "$BOUND_STDOUT" 2>/dev/null || true
+    [[ -n "$BOUND_STDERR" ]] && "$BOUND_RM_BIN" -f -- "$BOUND_STDERR" 2>/dev/null || true
+  fi
+}
+trap cleanup_bounded_files EXIT
+
+run_bounded() {
+  local timeout_bin mktemp_bin head_bin stat_bin command_rc
+  local stdout_bytes stderr_bytes stdout_limit stderr_limit
+  local emit_rc=0 stderr_emit_rc=0 cleanup_rc=0
+  local truncated=false
+
+  timeout_bin="$(runtime_tool timeout)" || {
+    echo "timeout is unavailable for bounded diagnostics" >&2
+    return 69
+  }
+  mktemp_bin="$(runtime_tool mktemp)" || {
+    echo "mktemp is unavailable for bounded diagnostics" >&2
+    return 69
+  }
+  head_bin="$(runtime_tool head)" || {
+    echo "head is unavailable for bounded diagnostics" >&2
+    return 69
+  }
+  BOUND_RM_BIN="$(runtime_tool rm)" || {
+    echo "rm is unavailable for bounded diagnostics" >&2
+    return 69
+  }
+  stat_bin="$(runtime_tool stat)" || {
+    echo "stat is unavailable for bounded diagnostics" >&2
+    return 69
+  }
+
+  BOUND_STDOUT="$("$mktemp_bin")"
+  BOUND_STDERR="$("$mktemp_bin")"
+  set +e
+  (
+    ulimit -f "$CAPTURE_FILE_BLOCKS"
+    exec "$timeout_bin" --signal=TERM \
+      --kill-after="${COMMAND_KILL_GRACE_SECONDS}s" \
+      "${COMMAND_TERM_SECONDS}s" "$@"
+  ) > "$BOUND_STDOUT" 2> "$BOUND_STDERR"
+  command_rc=$?
+  set -e
+
+  stdout_bytes="$("$stat_bin" -c '%s' "$BOUND_STDOUT")"
+  stderr_bytes="$("$stat_bin" -c '%s' "$BOUND_STDERR")"
+  if [[ ! "$stdout_bytes" =~ ^[0-9]+$ || ! "$stderr_bytes" =~ ^[0-9]+$ ]]; then
+    echo "failed to measure diagnostic output" >&2
+    return 69
+  fi
+  stdout_limit="$stdout_bytes"
+  stderr_limit="$stderr_bytes"
+  if (( stdout_bytes > MAX_STREAM_BYTES )); then
+    stdout_limit="$MAX_STREAM_BYTES"
+    truncated=true
+  fi
+  if (( stderr_bytes > MAX_STREAM_BYTES )); then
+    stderr_limit="$MAX_STREAM_BYTES"
+    truncated=true
+  fi
+
+  set +e
+  "$head_bin" -c "$stdout_limit" -- "$BOUND_STDOUT"
+  emit_rc=$?
+  "$head_bin" -c "$stderr_limit" -- "$BOUND_STDERR" >&2
+  stderr_emit_rc=$?
+  (( emit_rc == 0 )) && emit_rc="$stderr_emit_rc"
+  "$BOUND_RM_BIN" -f -- "$BOUND_STDOUT" "$BOUND_STDERR"
+  cleanup_rc=$?
+  if (( cleanup_rc == 0 )); then
+    BOUND_STDOUT=""
+    BOUND_STDERR=""
+  elif (( emit_rc == 0 )); then
+    emit_rc="$cleanup_rc"
+  fi
+  set -e
+
+  if (( emit_rc != 0 )); then
+    return 74
+  fi
+  if (( command_rc == 124 || command_rc == 137 )); then
+    [[ "$truncated" == true ]] && \
+      echo "Diagnostic output also exceeded the 512 KiB per-stream limit" >&2
+    echo "Diagnostic command reached its deadline (${COMMAND_MAX_SECONDS}-second hard limit)" >&2
+    return 124
+  fi
+  if [[ "$truncated" == true ]]; then
+    echo "Diagnostic output exceeded the 512 KiB per-stream limit" >&2
+    return 75
+  fi
+  return "$command_rc"
+}
+
+hardware_output() {
+  local found=0
+  printf '%s\n' '== CPU =='
+  if [[ -x /usr/bin/lscpu ]]; then
+    /usr/bin/lscpu
+    found=1
+  fi
+  printf '%s\n' '== Block devices =='
+  if [[ -x /usr/bin/lsblk ]]; then
+    /usr/bin/lsblk -o NAME,TYPE,SIZE,MODEL,ROTA,MOUNTPOINT
+    found=1
+  fi
+  printf '%s\n' '== Memory =='
+  if [[ -x /usr/bin/free ]]; then
+    /usr/bin/free -h
+    found=1
+  fi
+  printf '%s\n' '== Sensors =='
+  if [[ -x /usr/bin/sensors ]]; then
+    /usr/bin/sensors
+    found=1
+  else
+    echo 'sensors is not installed'
+  fi
+  (( found == 1 )) && return 0
+  echo "No supported hardware commands are available on this host" >&2
+  return 69
+}
+
+if [[ $# -eq 1 && "$1" == --internal-hardware ]]; then
+  hardware_output
+  exit $?
+fi
+[[ $# -eq 0 ]] || usage
+
 allowlist_contains() {
   local file="$1" requested="$2" line stat_command found=false entries=0 bytes
   if [[ ! -f "$file" || -L "$file" || ! -r "$file" ]]; then
@@ -86,8 +246,9 @@ if [[ "$request" =~ ^status[[:space:]]+($UNIT_PATTERN)$ ]]; then
   unit="${BASH_REMATCH[1]}"
   require_allowed "$STATUS_ALLOWLIST" "$unit"
   if [[ -x /usr/bin/systemctl ]]; then
-    exec /usr/bin/systemctl show --no-pager \
+    run_bounded /usr/bin/systemctl show --no-pager \
       --property=Id,LoadState,ActiveState,SubState,UnitFileState "$unit"
+    exit $?
   fi
   echo "systemctl is not available on this host" >&2
   exit 69
@@ -103,8 +264,9 @@ if [[ "$request" =~ ^logs[[:space:]]+($UNIT_PATTERN)[[:space:]]+([0-9]{1,4})$ ]]
     exit 64
   fi
   if [[ -x /usr/bin/journalctl ]]; then
-    exec /usr/bin/journalctl --no-pager --output=short-iso \
+    run_bounded /usr/bin/journalctl --no-pager --output=short-iso \
       -n "$lines" -u "$unit"
+    exit $?
   fi
   echo "journalctl is not available on this host" >&2
   exit 69
@@ -112,41 +274,19 @@ fi
 
 if [[ "$request" == ports ]]; then
   if [[ -x /usr/bin/ss ]]; then
-    exec /usr/bin/ss -lntup
+    run_bounded /usr/bin/ss -lntup
+    exit $?
   elif [[ -x /bin/ss ]]; then
-    exec /bin/ss -lntup
+    run_bounded /bin/ss -lntup
+    exit $?
   fi
   echo "ss is not available on this host" >&2
   exit 69
 fi
 
 if [[ "$request" == hardware ]]; then
-  found=0
-  printf '%s\n' '== CPU =='
-  if [[ -x /usr/bin/lscpu ]]; then
-    /usr/bin/lscpu
-    found=1
-  fi
-  printf '%s\n' '== Block devices =='
-  if [[ -x /usr/bin/lsblk ]]; then
-    /usr/bin/lsblk -o NAME,TYPE,SIZE,MODEL,ROTA,MOUNTPOINT
-    found=1
-  fi
-  printf '%s\n' '== Memory =='
-  if [[ -x /usr/bin/free ]]; then
-    /usr/bin/free -h
-    found=1
-  fi
-  printf '%s\n' '== Sensors =='
-  if [[ -x /usr/bin/sensors ]]; then
-    /usr/bin/sensors
-    found=1
-  else
-    echo 'sensors is not installed'
-  fi
-  (( found == 1 )) && exit 0
-  echo "No supported hardware commands are available on this host" >&2
-  exit 69
+  run_bounded /usr/local/sbin/homelab-agent-dispatch-root --internal-hardware
+  exit $?
 fi
 
 usage

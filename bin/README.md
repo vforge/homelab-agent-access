@@ -100,6 +100,13 @@ allowlists, and limits log requests to 500 lines. `ports` and `hardware` remain
 available independently. It uses fixed absolute command paths and does not
 interpret arbitrary shell input.
 
+Each diagnostic command begins termination after 14 seconds and is forcibly
+killed one second later if needed. Captured stdout and stderr are each limited
+to 512 KiB and are emitted after the command finishes. A timeout returns status
+124, even if output was also truncated; truncation alone returns status 75.
+Either response may contain partial diagnostic output and must not be treated as
+a successful, complete result.
+
 The generated key uses OpenSSH's `restrict` option plus explicit restrictions
 for port forwarding, X11 forwarding, agent forwarding, PTY allocation, and
 per-user SSH rc files. The generated sudoers rule permits only the root helper
@@ -112,8 +119,8 @@ remaining readable to sshd's unprivileged account lookup.
 The target must provide:
 
 - OpenSSH 7.2 or newer for the authorized-key `restrict` option.
-- Bash, `useradd`, `usermod`, `getent`, `install`, `base64`, `cmp`, and
-  `sha256sum`.
+- Bash, `useradd`, `usermod`, `getent`, `install`, `base64`, `cmp`, `head`,
+  `timeout`, and `sha256sum`.
 - `sudo` at `/usr/bin/sudo` and `visudo`.
 - A privileged SSH login for provisioning.
 
