@@ -114,8 +114,12 @@ KEY_BASENAME="${KEY_FILE##*/}"
 KEY_BASENAME="${KEY_BASENAME%.pub}"
 if [[ -n "$READONLY_USER_OVERRIDE" ]]; then
   READONLY_USER="$READONLY_USER_OVERRIDE"
-elif [[ "$KEY_BASENAME" == id_* ]]; then
+elif [[ "$KEY_BASENAME" == id_*_* ]]; then
+  # e.g. id_ed25519_agent -> agent
   READONLY_USER="${KEY_BASENAME##id_*_}"
+elif [[ "$KEY_BASENAME" == id_* ]]; then
+  # e.g. id_agent -> agent
+  READONLY_USER="${KEY_BASENAME#id_}"
 else
   READONLY_USER="$KEY_BASENAME"
 fi
