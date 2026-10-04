@@ -154,7 +154,9 @@ sudo install -d -o root -g root -m 755 /run/sshd
 sudo rm -rf "$ADMIN_AUTH_DIR"
 sudo install -d -o root -g root -m 755 "$ADMIN_AUTH_DIR"
 sudo install -o root -g root -m 600 "$HOST_KEY" "$HOST_KEY_ROOT"
-sudo install -o root -g root -m 600 "$ADMIN_KEY.pub" "$ADMIN_AUTH_KEYS"
+# Both root and the unprivileged test administrator must be able to read the
+# public key; keep it root-owned and non-writable, as with managed keys.
+sudo install -o root -g root -m 444 "$ADMIN_KEY.pub" "$ADMIN_AUTH_KEYS"
 
 cat > "$SSHD_CONFIG" <<EOF
 Port $PORT
