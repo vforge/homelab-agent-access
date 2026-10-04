@@ -72,6 +72,30 @@ done < "$TMP_DIR/ssh.args"
 [[ "${args[13]}" == agent ]]
 [[ "${args[14]}" == true ]]
 
+# Sudo transport must fail closed without a controlling terminal instead of
+# consuming the script as a password or attempting an SSH connection.
+if PATH="$TMP_DIR/bin:$PATH" "$ROOT_DIR/bin/list" root@server --sudo \
+  > "$TMP_DIR/sudo-out" 2>&1; then
+  echo 'sudo mode accepted a non-interactive invocation' >&2
+  exit 1
+fi
+grep -q 'interactive controlling terminal' "$TMP_DIR/sudo-out"
+if PATH="$TMP_DIR/bin:$PATH" "$ROOT_DIR/bin/create" root@server \
+  "$TMP_DIR/test-key.pub" --user agent \
+  --status-allowlist "$TMP_DIR/status-allowlist" \
+  --log-allowlist "$TMP_DIR/log-allowlist" --sudo \
+  > "$TMP_DIR/sudo-out" 2>&1; then
+  echo 'sudo create accepted a non-interactive invocation' >&2
+  exit 1
+fi
+grep -q 'interactive controlling terminal' "$TMP_DIR/sudo-out"
+if PATH="$TMP_DIR/bin:$PATH" "$ROOT_DIR/bin/remove" root@server agent --sudo \
+  > "$TMP_DIR/sudo-out" 2>&1; then
+  echo 'sudo remove accepted a non-interactive invocation' >&2
+  exit 1
+fi
+grep -q 'interactive controlling terminal' "$TMP_DIR/sudo-out"
+
 if PATH="$TMP_DIR/bin:$PATH" "$ROOT_DIR/bin/create" root@server \
   "$TMP_DIR/test-key.pub" --user 'bad;name' \
   --status-allowlist "$TMP_DIR/status-allowlist" \

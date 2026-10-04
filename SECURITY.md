@@ -30,6 +30,10 @@ by the helper.
 ## Current security properties
 
 - Provisioning payloads are encoded before being passed through SSH arguments.
+- An optional administrator-only `--sudo` mode stages the trusted script in an
+  admin-owned 0700 directory and obtains the sudo password on an SSH TTY,
+  separate from the script input. The diagnostic account's exact no-argument
+  sudo rule is unchanged.
 - Provisioning preflights managed files, refuses unproven fixed helper paths,
   validates existing managed file ownership, modes, formats, helper SHA-256
   digests, and sudoers content, installs replacements atomically, and rolls them
@@ -62,6 +66,14 @@ by the helper.
 
 ## Remaining limitations
 
+- `--sudo` requires an SSH key-authenticated administrator who may run
+  `/bin/bash` as root; this is root-equivalent and must never be granted to the
+  diagnostic agent. The administrator can modify the staged script before
+  execution, so this mode trusts that account. A network interruption can
+  leave admin-readable staging files containing the public key, policy and
+  audit output under `/tmp/homelab-agent-access.*`; manually inspect and
+  delete them on a disposable host. Password prompting needs a real terminal,
+  so unattended calls cannot use password-protected sudo.
 - The administrator must maintain the allowlists; an allowlisted unit can still
   expose sensitive state or logs.
 - `journalctl` output may contain credentials or other sensitive information.

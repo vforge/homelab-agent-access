@@ -8,6 +8,7 @@ Usage: list user@host [options]
 Options:
   --json    Emit machine-readable JSON (requires jq on the target)
   --brief   Emit one line per managed account
+  --sudo    Prompt for admin sudo password over an SSH TTY
   --help    Show this help
 EOF
   exit "${1:-2}"
@@ -20,9 +21,11 @@ fi
 REMOTE="$1"
 shift
 FORMAT=table
+ADMIN_MODE=direct
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json) FORMAT=json; shift ;;
+    --sudo) ADMIN_MODE=sudo; shift ;;
     --brief) FORMAT=brief; shift ;;
     --help) usage 0 ;;
     *) echo "Unknown option: $1" >&2; usage ;;
@@ -34,13 +37,13 @@ if [[ "$REMOTE" == -* || ! "$REMOTE" =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]]; then
   exit 1
 fi
 
-ssh \
-  -o BatchMode=yes \
-  -o RequestTTY=no \
-  -o StrictHostKeyChecking=yes \
-  -o ConnectTimeout=10 \
-  -- "$REMOTE" bash -s -- "$FORMAT" <<'REMOTE_SCRIPT'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/admin-transport
+source "$SCRIPT_DIR/bin/admin-transport"
+admin_run "$REMOTE" "$ADMIN_MODE" "$FORMAT" <<'REMOTE_SCRIPT'
 set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 
 [[ $# -eq 1 ]] || { echo "invalid audit payload" >&2; exit 64; }
 FORMAT="$1"

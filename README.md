@@ -67,8 +67,9 @@ no intended interactive shell or arbitrary command interface.
 ### Requirements
 
 - Bash and OpenSSH 7.2 or newer on the administering machine and target.
-- A privileged SSH login to the target. The provisioning script performs root
-  operations directly and does not automatically invoke `sudo`.
+- An SSH key-authenticated administrator login to the target: either root or
+  an administrator authorized to run `/bin/bash` with `sudo` (use `--sudo` from
+  an interactive terminal; a password prompt is supported).
 - A Linux target with `bash`, `useradd`, `usermod`, `getent`, `install`, `base64`,
   `cmp`, `head`, `timeout`, `sha256sum`, `sudo`, and `visudo`; Debian/Ubuntu and
   Arch-like systems are the targets.
@@ -98,7 +99,12 @@ operation; each file is limited to 65,536 bytes and 1,024 units. `status` and
 `logs` requests for units absent from their respective allowlist are rejected;
 `ports` and `hardware` are unaffected.
 
-The scripts refuse to modify unmanaged existing accounts or adopt unproven
+The agent account does not need to exist: `bin/create` creates it and
+`bin/remove` removes it. For an admin account with password-protected sudo,
+use `admin@server` instead of `root@server` and add `--sudo` to each of the
+three commands. The admin SSH login still requires a key and a verified host
+key; run the commands in a real terminal so sudo can prompt securely. The
+scripts refuse to modify unmanaged existing accounts or adopt unproven
 fixed helper paths. They preserve only comments plus the managed key block in
 `authorized_keys`. See
 [`bin/README.md`](bin/README.md) for the administrator command reference.
@@ -163,7 +169,7 @@ threat-model impact.
 make test
 make lint         # requires ShellCheck
 make integration  # requires an ephemeral Linux host and passwordless sudo
-bash -n bin/create bin/list bin/remove
+bash -n bin/admin-transport bin/create bin/list bin/remove
 bash -n remote/homelab-agent-dispatch remote/homelab-agent-dispatch-root
 ```
 

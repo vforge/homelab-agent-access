@@ -56,7 +56,10 @@ The administrator:
    needed.
 
 Provisioning is an administrative-plane operation and requires an independently
-trusted privileged SSH login. That credential is never given to the agent.
+trusted privileged SSH login. The administrator can opt into `--sudo` with a
+key-authenticated SSH account permitted to run `/bin/bash` as root; sudo prompts
+on an SSH TTY after the trusted script is staged in an admin-owned private
+directory. That root-equivalent credential is never given to the agent.
 
 ### Agent
 

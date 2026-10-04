@@ -4,6 +4,9 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- Add an opt-in administrator `--sudo` mode to create, list, and remove for
+  key-authenticated SSH accounts with interactive password-protected sudo;
+  keep the agent's exact sudo rule unchanged.
 - Document the accepted minimal SSH capability-gateway architecture, its trust
   boundaries, alternatives, invariants, evolution priorities, and
   reconsideration triggers.

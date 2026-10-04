@@ -14,14 +14,15 @@ Usage: create user@host /path/to/public-key.pub [options]
 
 Options:
   --user <name>                 Remote account name (default: derived from key filename)
+  --sudo                        Prompt for admin sudo password over an SSH TTY
   --status-allowlist <file>    One allowed systemd unit per line for status requests
   --log-allowlist <file>       One allowed systemd unit per line for log requests
   --help                       Show this help
 
 Both allowlist files are required. Blank lines and lines beginning with '#'
 are ignored; an empty file denies that operation. The remote login must be
-privileged. The target must already trust the administrator's host key; this
-command uses StrictHostKeyChecking=yes.
+privileged (or have sudo access with --sudo). The target must already trust
+the administrator's host key; this command uses StrictHostKeyChecking=yes.
 EOF
   exit "${1:-2}"
 }
@@ -38,6 +39,7 @@ KEY_FILE="$2"
 shift 2
 
 READONLY_USER_OVERRIDE=""
+ADMIN_MODE=direct
 STATUS_ALLOWLIST_FILE=""
 LOG_ALLOWLIST_FILE=""
 while [[ $# -gt 0 ]]; do
@@ -46,6 +48,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || usage
       READONLY_USER_OVERRIDE="$2"
       shift 2
+      ;;
+    --sudo)
+      ADMIN_MODE=sudo
+      shift
       ;;
     --status-allowlist)
       [[ $# -ge 2 ]] || usage
@@ -186,15 +192,14 @@ LOG_ALLOWLIST_B64="$(encode_file "$LOG_ALLOWLIST_FILE")"
 printf 'Provisioning forced-command access for %s on %s\n' "$READONLY_USER" "$REMOTE"
 printf 'Public key: %s\n' "$KEY_FILE"
 
-ssh \
-  -o BatchMode=yes \
-  -o RequestTTY=no \
-  -o StrictHostKeyChecking=yes \
-  -o ConnectTimeout=10 \
-  -- "$REMOTE" bash -s -- \
+# shellcheck source=bin/admin-transport
+source "$SCRIPT_DIR/bin/admin-transport"
+admin_run "$REMOTE" "$ADMIN_MODE" \
   "$READONLY_USER" "$PUBLIC_KEY_B64" "$DISPATCHER_B64" "$ROOT_HELPER_B64" \
   "$STATUS_ALLOWLIST_B64" "$LOG_ALLOWLIST_B64" <<'REMOTE_SCRIPT'
 set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 
 [[ $# -eq 6 ]] || { echo "invalid provisioning payload" >&2; exit 64; }
 READONLY_USER="$1"

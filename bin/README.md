@@ -26,6 +26,7 @@ example.service
 
 Options:
 
+- `--sudo` — run as an SSH key-authenticated admin with sudo; prompts on a TTY.
 - `--user <name>` — remote account name. If omitted, it is derived from the
   public-key filename.
 - `--status-allowlist <file>` — allowed systemd units for `status` requests;
@@ -34,8 +35,14 @@ Options:
   required and validated before transfer.
 - `--help` — show usage.
 
-The command requires a privileged SSH login. It uses strict host-key checking
-and safely encodes provisioning payloads before sending them to the target.
+The command requires a privileged SSH login. With a key-authenticated admin
+login that has password-protected sudo, add `--sudo` and run from an interactive
+terminal; the password is entered at sudo's remote TTY prompt, never in a CLI
+argument or the script stream. Use `--sudo` for `list` and `remove` too. This
+mode requires the admin to be authorized to run `/bin/bash` as root and is
+therefore an administrative root-equivalent permission. The agent account does
+not need to exist before `create`; the command creates it. Both transports use
+strict host-key checking and encode provisioning payloads before transfer.
 The allowlists are host-level and apply to every managed account on that host.
 Re-running it replaces the root-owned host allowlists, so review changes before
 updating an account. Existing managed accounts keep their currently installed
@@ -60,8 +67,9 @@ Re-running the command rotates the managed key and updates the helper files.
 ./bin/list root@server --json
 ```
 
-`--json` requires `jq` on the target. The audit validates account metadata,
-home ownership/mode, password disabling, the managed authorized-key block, exact
+`--json` requires `jq` on the target. `--sudo` works with all output formats;
+its result stream is kept separate from the terminal's sudo prompt. The audit
+validates account metadata, home ownership/mode, password disabling, the managed authorized-key block, exact
 sudoers content, allowlist syntax, expected root ownership/modes, the helper
 digest manifest, and installed helper SHA-256 values. States include `valid`,
 `missing`, `invalid`, `unsafe`, `legacy`, `stale`, and `unattested` as
@@ -75,8 +83,9 @@ recorded digest match. The audit does not print allowlist contents.
 ./bin/remove root@server agent --keep-home
 ```
 
-Removal deletes the managed key block, the per-account sudoers rule, the
-account marker, and the account. It does not delete the host-level allowlists;
+`--sudo` also applies to removal when using an admin account. Removal deletes
+the managed key block, the per-account sudoers rule, the account marker, and
+the account. It does not delete the host-level allowlists;
 those remain for other managed accounts and must be reviewed separately.
 `--keep-home` preserves the home directory. Unmanaged accounts are never
 removed. If passwd state is already absent, removal validates the residual
@@ -122,11 +131,25 @@ The target must provide:
 - Bash, `useradd`, `usermod`, `getent`, `install`, `base64`, `cmp`, `head`,
   `timeout`, and `sha256sum`.
 - `sudo` at `/usr/bin/sudo` and `visudo`.
-- A privileged SSH login for provisioning.
+- A privileged SSH login for provisioning, or a key-authenticated administrator
+  login with sudo permission to run `/bin/bash` and an interactive terminal.
 
 `systemctl`, `journalctl`, `ss`, `lscpu`, `lsblk`, `free`, and `sensors` are
 used only when available. Missing inspection tools produce a clear error or
 partial hardware output.
+
+## Administrative sudo transport
+
+`--sudo` stages the trusted script in a 0700 temporary directory on the target,
+then starts it with `sudo /bin/bash` over an SSH TTY. Captured stdout and stderr
+are fetched separately and the temporary files are removed afterward. The
+administrator must trust their SSH account and the host: that account owns the
+staged script and can modify it. A disconnect or interruption can leave the
+staged script, public key, allowlist contents, or diagnostic audit output in the
+admin-owned temporary directory; inspect and remove such directories on the
+host before retrying. The code does not create an agent sudo rule with broader
+permissions. Password sudo requires a real controlling terminal; noninteractive
+runs fail closed. SSH itself still requires key authentication (`BatchMode=yes`).
 
 ## Migration and limitations
 

@@ -56,13 +56,18 @@ if ! sudo -n true 2>/dev/null; then
   exit 69
 fi
 
-for required in ssh ssh-keygen ssh-keyscan sudo python3 jq; do
+for required in ssh ssh-keygen ssh-keyscan sudo python3 jq script; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "missing local test command: $required" >&2
     exit 69
   }
 done
 REAL_SSH="$(command -v ssh)"
+ADMIN_USER="$(id -un)"
+[[ "$ADMIN_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || {
+  echo 'integration administrator name is not a supported account name' >&2
+  exit 64
+}
 for required in /usr/sbin/sshd /usr/sbin/visudo; do
   [[ -x "$required" ]] || {
     echo "missing local test command: $required" >&2
@@ -140,9 +145,9 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM no
 LogLevel ERROR
-AllowUsers root $TEST_USER $NAMESPACE_USER
+AllowUsers root $ADMIN_USER $TEST_USER $NAMESPACE_USER
 
-Match User root
+Match User root,$ADMIN_USER
   AuthorizedKeysFile $ADMIN_AUTH_KEYS
 EOF
 
@@ -163,6 +168,15 @@ Host admin-target
   HostName 127.0.0.1
   Port $PORT
   User root
+  IdentityFile $ADMIN_KEY
+  IdentitiesOnly yes
+  UserKnownHostsFile $KNOWN_HOSTS
+  StrictHostKeyChecking yes
+
+Host sudo-target
+  HostName 127.0.0.1
+  Port $PORT
+  User $ADMIN_USER
   IdentityFile $ADMIN_KEY
   IdentitiesOnly yes
   UserKnownHostsFile $KNOWN_HOSTS
@@ -317,6 +331,23 @@ expect_agent_rc() {
 
 ssh -o BatchMode=yes -o RequestTTY=no admin-target true
 
+# Exercise the opt-in sudo transport through a real pseudo-terminal. The
+# disposable runner has passwordless sudo; an interactive deployment prompts
+# for the password instead. Never place a password in a test fixture.
+sudo_admin() {
+  local operation="$1"; shift
+  local invocation="'$ROOT_DIR/bin/$operation' '$ADMIN_USER@sudo-target'"
+  local argument
+  for argument in "$@"; do
+    [[ "$argument" =~ ^[A-Za-z0-9_+./=-]+$ ]] || {
+      echo 'unsafe integration-test argument' >&2; return 64;
+    }
+    invocation+=" $argument"
+  done
+  script -q -e -c "$invocation --sudo" /dev/null </dev/null \
+    > "$WORK_DIR/sudo-terminal-output"
+}
+
 # A first installation must not adopt or replace a fixed helper path that has
 # no corresponding managed installation state.
 printf '%s\n' '#!/bin/bash' '# unrelated file' > "$WORK_DIR/unmanaged-dispatcher"
@@ -352,9 +383,19 @@ set -e
 sudo test -f "/home/$TEST_USER/unmanaged-sentinel"
 sudo rm -rf --one-file-system -- "/home/$TEST_USER"
 
-"$ROOT_DIR/bin/create" root@admin-target "$AGENT_KEY.pub" --user "$TEST_USER" \
+sudo_admin create "$AGENT_KEY.pub" --user "$TEST_USER" \
   --status-allowlist "$STATUS_ALLOWLIST" \
   --log-allowlist "$LOG_ALLOWLIST"
+sudo_admin list --json
+script -q -e -c "'$ROOT_DIR/bin/list' '$ADMIN_USER@sudo-target' --sudo --json > '$WORK_DIR/sudo-json'" \
+  /dev/null </dev/null > "$WORK_DIR/sudo-terminal-output"
+jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
+  .metadata == "valid" and .helper_manifest == "valid")' \
+  "$WORK_DIR/sudo-json" >/dev/null
+"$ROOT_DIR/bin/list" root@admin-target --json | \
+  jq -e --arg user "$TEST_USER" '.[] | select(.user == $user and
+    .helper_manifest == "valid" and .dispatcher == "secure" and
+    .root_helper == "secure")' >/dev/null
 
 # A pre-attestation installation with recognizable secure helpers can migrate
 # once; the update must recreate the digest manifest.
@@ -518,7 +559,7 @@ set -e
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \
   usermod --home "/home/$TEST_USER" "$TEST_USER"
 
-"$ROOT_DIR/bin/remove" root@admin-target "$TEST_USER"
+sudo_admin remove "$TEST_USER"
 ssh -o BatchMode=yes -o RequestTTY=no admin-target \
   test ! -e "/home/$TEST_USER"
 if ssh -o BatchMode=yes -o RequestTTY=no agent-target ports >/dev/null 2>&1; then
