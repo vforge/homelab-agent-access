@@ -102,6 +102,12 @@ by the helper.
 Do not add service mutation, arbitrary file reads, arbitrary command arguments,
 or shell interpretation to the protocol without a separate security review.
 
+The disposable Linux integration test temporarily changes a locked test
+administrator password marker to another impossible password value when needed
+for public-key SSH under `UsePAM=no`, then restores the original marker on exit.
+It must never run on a persistent host; an interrupted runner should be
+recreated rather than reused.
+
 ## Reporting a vulnerability
 
 Please do not disclose exploitable details in a public issue. Use GitHub's

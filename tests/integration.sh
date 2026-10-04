@@ -15,6 +15,8 @@ ADMIN_AUTH_KEYS="$ADMIN_AUTH_DIR/authorized_keys"
 HOST_KEY_ROOT="$ADMIN_AUTH_DIR/host-key"
 PID_FILE="$ADMIN_AUTH_DIR/sshd.pid"
 SYSTEM_CLEANUP=false
+ADMIN_PASSWORD_MARKER_CHANGED=false
+ORIGINAL_ADMIN_LOCK_MARKER=""
 
 cleanup() {
   local pid=""
@@ -23,6 +25,12 @@ cleanup() {
     if [[ "$pid" =~ ^[0-9]+$ ]]; then
       sudo kill "$pid" 2>/dev/null || true
     fi
+  fi
+
+  if [[ "$ADMIN_PASSWORD_MARKER_CHANGED" == true ]]; then
+    # Restore the disposable administrator's original locked password marker.
+    sudo usermod --password "$ORIGINAL_ADMIN_LOCK_MARKER" "$ADMIN_USER" >/dev/null 2>&1 || \
+      echo 'failed to restore the integration administrator password marker' >&2
   fi
 
   if [[ "$SYSTEM_CLEANUP" == true ]]; then
@@ -96,6 +104,20 @@ for test_account in "$TEST_USER" "$NAMESPACE_USER"; do
   fi
 done
 SYSTEM_CLEANUP=true
+
+# This isolated sshd uses UsePAM=no. A runner with a locked passwd marker
+# cannot use SSH public keys, so temporarily switch to the equally impossible
+# '*' password hash used for managed accounts. Restore the original marker in
+# the EXIT trap. Already usable administrator accounts remain unchanged.
+admin_password_field="$(sudo getent shadow "$ADMIN_USER" | cut -d: -f2)"
+case "$admin_password_field" in
+  '!'|'!!'|'!*')
+    ORIGINAL_ADMIN_LOCK_MARKER="$admin_password_field"
+    sudo usermod --password '*' "$ADMIN_USER"
+    ADMIN_PASSWORD_MARKER_CHANGED=true
+    ;;
+esac
+unset admin_password_field
 
 mkdir -p "$TMP_BASE"
 WORK_DIR="$(mktemp -d "$TMP_BASE/homelab-agent-access-integration.XXXXXX")"
