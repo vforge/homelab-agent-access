@@ -330,6 +330,7 @@ expect_agent_rc() {
 }
 
 ssh -o BatchMode=yes -o RequestTTY=no admin-target true
+ssh -o BatchMode=yes -o RequestTTY=no sudo-target true
 
 # Exercise the opt-in sudo transport through a real pseudo-terminal. The
 # disposable runner has passwordless sudo; an interactive deployment prompts
@@ -337,15 +338,22 @@ ssh -o BatchMode=yes -o RequestTTY=no admin-target true
 sudo_admin() {
   local operation="$1"; shift
   local invocation="'$ROOT_DIR/bin/$operation' '$ADMIN_USER@sudo-target'"
-  local argument
+  local argument rc
   for argument in "$@"; do
     [[ "$argument" =~ ^[A-Za-z0-9_+./=-]+$ ]] || {
       echo 'unsafe integration-test argument' >&2; return 64;
     }
     invocation+=" $argument"
   done
-  script -q -e -c "$invocation --sudo" /dev/null </dev/null \
-    > "$WORK_DIR/sudo-terminal-output"
+  if script -q -e -c "$invocation --sudo" /dev/null </dev/null \
+    > "$WORK_DIR/sudo-terminal-output"; then
+    return 0
+  else
+    rc=$?
+    echo "sudo transport integration failed for $operation (exit $rc)" >&2
+    cat "$WORK_DIR/sudo-terminal-output" >&2
+    return "$rc"
+  fi
 }
 
 # A first installation must not adopt or replace a fixed helper path that has

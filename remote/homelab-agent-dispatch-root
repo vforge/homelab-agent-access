@@ -44,11 +44,15 @@ runtime_tool() {
   return 1
 }
 
-# shellcheck disable=SC2329 # Invoked by the EXIT trap below.
+# shellcheck disable=SC2317,SC2329 # Invoked indirectly by the EXIT trap.
 cleanup_bounded_files() {
   if [[ -n "$BOUND_RM_BIN" ]]; then
-    [[ -n "$BOUND_STDOUT" ]] && "$BOUND_RM_BIN" -f -- "$BOUND_STDOUT" 2>/dev/null || true
-    [[ -n "$BOUND_STDERR" ]] && "$BOUND_RM_BIN" -f -- "$BOUND_STDERR" 2>/dev/null || true
+    if [[ -n "$BOUND_STDOUT" ]]; then
+      "$BOUND_RM_BIN" -f -- "$BOUND_STDOUT" 2>/dev/null || true
+    fi
+    if [[ -n "$BOUND_STDERR" ]]; then
+      "$BOUND_RM_BIN" -f -- "$BOUND_STDERR" 2>/dev/null || true
+    fi
   fi
 }
 trap cleanup_bounded_files EXIT
