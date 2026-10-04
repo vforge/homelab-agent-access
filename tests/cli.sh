@@ -5,6 +5,18 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+for example in status-allowlist.example log-allowlist.example; do
+  file="$ROOT_DIR/examples/$example"
+  [[ -f "$file" && ! -L "$file" ]] || {
+    echo "missing regular allowlist example: $example" >&2
+    exit 1
+  }
+  if grep -Ev '^(#|$)' "$file" >/dev/null; then
+    echo "allowlist example is not deny-by-default: $example" >&2
+    exit 1
+  fi
+done
+
 ssh-keygen -q -t ed25519 -N '' -f "$TMP_DIR/test-key"
 printf '%s\n' "$(sed 's/ [^ ]*$/ agent test/' "$TMP_DIR/test-key.pub")" > "$TMP_DIR/test-key.pub"
 printf '%s\n' '# permitted units' '' 'agent.service' > "$TMP_DIR/status-allowlist"

@@ -1,0 +1,6 @@
+# Copy this file outside the repository before provisioning.
+# One reviewed systemd unit per line; blank and comment lines are ignored.
+# With no uncommented units, log requests are denied.
+# Logs can contain secrets. Grant this capability only when necessary.
+# Uncomment a reviewed unit only when needed:
+# example.service

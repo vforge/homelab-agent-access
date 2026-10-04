@@ -9,16 +9,16 @@ host key before provisioning.
 
 ## Create or update
 
-Create one line-delimited allowlist file for each operation outside this
-repository. Blank lines and lines beginning with `#` are ignored; an empty file
+Copy the separate [status](../examples/status-allowlist.example) and
+[log](../examples/log-allowlist.example) templates outside this repository.
+They contain only comments and initially deny both operations; uncomment only
+units reviewed for that operation. Logs may contain secrets even when status is
+safe. Blank lines and lines beginning with `#` are ignored; an empty file
 denies that operation. Each file is limited to 65,536 bytes and 1,024 units.
 
-```text
-# status-units.txt
-example.service
-```
-
 ```bash
+cp examples/status-allowlist.example /path/to/status-units.txt
+cp examples/log-allowlist.example /path/to/log-units.txt
 ./bin/create root@server ~/.ssh/agent.pub --user agent \
   --status-allowlist /path/to/status-units.txt \
   --log-allowlist /path/to/log-units.txt
@@ -44,9 +44,13 @@ therefore an administrative root-equivalent permission. The agent account does
 not need to exist before `create`; the command creates it. Both transports use
 strict host-key checking and encode provisioning payloads before transfer.
 The allowlists are host-level and apply to every managed account on that host.
-Re-running it replaces the root-owned host allowlists, so review changes before
-updating an account. Existing managed accounts keep their currently installed
-helper until `create` is run again with both allowlist files.
+Edits to local copies do not apply automatically. To change policy for an
+existing account, rerun `create` with the same public key and account name and
+pass both current allowlist files, even if only one changed; add `--sudo` when
+using a sudo administrator. Re-running it replaces both root-owned host
+allowlists for every managed account, so review newly allowed units (especially
+logs) before updating. The same public key retains the managed key; a different
+one rotates it.
 
 The target account is recorded under `/etc/homelab-agent-access/accounts/`
 with its username, UID, and canonical `/home/USER` path. Existing accounts are

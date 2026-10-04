@@ -82,10 +82,14 @@ Run local checks first:
 make test
 ```
 
-Create host-specific unit allowlists outside this repository, one unit per
-line, then provision, audit, and remove an account:
+Start from the deny-by-default templates, copy them **outside this repository**,
+and uncomment only units you have reviewed. Keep separate lists because logs
+may be more sensitive than service status. Then provision, audit, and remove
+an account:
 
 ```bash
+cp examples/status-allowlist.example /path/to/status-units.txt
+cp examples/log-allowlist.example /path/to/log-units.txt
 ./bin/create root@server ~/.ssh/agent.pub --user agent \
   --status-allowlist /path/to/status-units.txt \
   --log-allowlist /path/to/log-units.txt
@@ -98,6 +102,22 @@ Blank and `#` comment lines are ignored. An empty allowlist denies its
 operation; each file is limited to 65,536 bytes and 1,024 units. `status` and
 `logs` requests for units absent from their respective allowlist are rejected;
 `ports` and `hardware` are unaffected.
+
+Edits to the copied allowlists are **not applied automatically**. To re-apply
+stricter or broader policy for an existing account, rerun `bin/create` with
+that account's same public key and name, passing **both** current allowlist
+files even if only one changed:
+
+```bash
+./bin/create root@server ~/.ssh/agent.pub --user agent \
+  --status-allowlist /path/to/status-units.txt \
+  --log-allowlist /path/to/log-units.txt
+```
+
+For a sudo administrator, use `admin@server` and add `--sudo`. Provisioning
+replaces the host-wide lists for **all** managed agents on that host; review any
+newly allowed units, especially log units, before applying the change. Using
+the same public key retains the agent identity; a different key rotates it.
 
 The agent account does not need to exist: `bin/create` creates it and
 `bin/remove` removes it. For an admin account with password-protected sudo,
@@ -149,6 +169,7 @@ or shell interpretation to the protocol without a separate security review.
 ```text
 .
 ├── bin/                    # Administrator provisioning, audit, and removal
+├── examples/               # Deny-by-default allowlist templates
 ├── remote/                 # Root-owned helper templates installed on targets
 ├── skills/                 # Agent-facing usage skill
 ├── tests/                  # Local validation helpers

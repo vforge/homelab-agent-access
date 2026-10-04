@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- Add deny-by-default status and log allowlist templates with instructions to
+  keep edited host policy outside the repository.
 - Add an opt-in administrator `--sudo` mode to create, list, and remove for
   key-authenticated SSH accounts with interactive password-protected sudo;
   keep the agent's exact sudo rule unchanged.
